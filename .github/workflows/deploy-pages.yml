@@ -13,8 +13,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.server.outputs.configured }}
+    steps:
+      - name: Check the deployment address
+        id: server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          if [ -n "$SERVER_HOST" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo '::error::Configure the SERVER_HOST repository secret before deploying.'
+            exit 1
+          fi
+
   build:
-    if: github.ref_name == github.event.repository.default_branch && (vars.VITE_API_ORIGIN != '' || github.event_name == 'workflow_dispatch')
+    needs: check
+    if: needs.check.outputs.configured == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -32,9 +51,11 @@ jobs:
         env:
           HUSKY: '0'
       - name: Build web application
-        run: pnpm --filter @ark-control/web run build --mode github-pages
         env:
-          VITE_API_ORIGIN: ${{ vars.VITE_API_ORIGIN }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          api_origin=$(node deploy/server-address.mjs)
+          VITE_API_ORIGIN="$api_origin" pnpm --filter @ark-control/web run build --mode github-pages
       - name: Package management API
         run: |
           pnpm --filter @ark-control/api run typecheck
@@ -71,7 +92,7 @@ jobs:
 
   backend:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     timeout-minutes: 10
     environment: backend
     steps:
@@ -82,14 +103,9 @@ jobs:
         with:
           name: ark-control-backend
           path: ${{ runner.temp }}/ark-control-backend
-      - name: Deploy API over SSH and start PM2
+      - name: Deploy API locally and start PM2
         run: bash deploy/publish-backend.sh "$RUNNER_TEMP/ark-control-backend/ark-control-backend.tar.gz"
         env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_DEPLOY_DIR: ${{ vars.SERVER_DEPLOY_DIR }}
 
   deploy:

@@ -34,7 +34,7 @@ async function pm2(args, env = process.env) {
   try {
     return (await run('pm2', args, { env, timeout: 20000, maxBuffer: 8 * 1024 ** 2 })).stdout;
   } catch {
-    throw new Error(`PM2 ${args[0]} 执行失败，请检查 SSH 用户的 PM2 环境。`);
+    throw new Error(`PM2 ${args[0]} 执行失败，请检查部署用户的 PM2 环境。`);
   }
 }
 
@@ -69,9 +69,11 @@ async function deploy(signal) {
   if (join(root, '..') === root) throw new Error('请选择应用目录。');
   const shared = join(root, 'shared');
   const cwd = join(shared, 'apps', 'api');
-  const envFile = join(shared, '.env');
-  const envText = await optional(readFile(envFile, 'utf8'));
-  if (envText === null) throw new Error('请先在部署目录的 shared/.env 配置 API 和 MySQL。');
+  const productionEnv = join(shared, '.env.prod');
+  const productionEnvText = await optional(readFile(productionEnv, 'utf8'));
+  const envFile = productionEnvText === null ? join(shared, '.env') : productionEnv;
+  const envText = productionEnvText ?? (await optional(readFile(envFile, 'utf8')));
+  if (envText === null) throw new Error('请先在部署目录的 shared/.env.prod 配置 API 和 MySQL。');
   const env = parseEnv(envText);
   const configured = process.env.API_HOST ?? env.API_HOST ?? '127.0.0.1';
   const host = configured === '0.0.0.0' ? '127.0.0.1' : configured === '::' ? '::1' : configured;

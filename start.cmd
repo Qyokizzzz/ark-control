@@ -10,8 +10,8 @@ if not exist node_modules (
   call pnpm install
   if errorlevel 1 exit /b 1
 )
-if not exist .env (
-  call pnpm run setup
+if not exist ".env.prod" if not exist ".env" if not defined ARK_ENV_FILE (
+  call pnpm run setup:prod
   if errorlevel 1 exit /b 1
 )
 call pnpm build

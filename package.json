@@ -20,6 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "setup": "node scripts/setup.mjs",
+    "setup:prod": "node scripts/setup.mjs --prod",
     "start": "pnpm --filter @ark-control/api start",
     "agent": "pnpm --filter @ark-control/agent start",
     "prepare": "husky"

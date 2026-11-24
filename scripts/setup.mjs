@@ -1,14 +1,24 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mysql from 'mysql2/promise';
 import { createSetupPrompt, envValue, SetupInputError } from './setup/index.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-if (existsSync(resolve(root, '.env'))) {
-  console.log('已有 .env，未覆盖。请直接运行 pnpm dev 或手动编辑配置。');
+const production = process.argv.includes('--prod');
+const envName = production ? '.env.prod' : '.env.dev';
+const envFile = resolve(root, envName);
+const legacy = resolve(root, '.env');
+const startup = production ? 'pnpm build 后运行 pnpm start' : 'pnpm dev';
+if (existsSync(envFile)) {
+  console.log(`已有 ${envName}。可直接使用 ${startup} 启动，或编辑配置。`);
+  process.exit(0);
+}
+if (existsSync(legacy)) {
+  await writeFile(envFile, await readFile(legacy), { mode: 0o600, flag: 'wx' });
+  console.log(`已从旧 .env 复制配置到 ${envName}。启动方式为 ${startup}。`);
   process.exit(0);
 }
 const prompt = createSetupPrompt();
@@ -22,7 +32,7 @@ try {
     throw new Error('MySQL 端口应为 1 至 65535 的整数。');
   const user = await ask('数据库管理账号', 'root');
   const password = await ask('数据库管理密码', '', true);
-  const database = await ask('数据库名称', 'ark_control');
+  const database = await ask('数据库名称', production ? 'ark_control' : 'ark_control_dev');
   if (!/^[a-zA-Z0-9_]{1,48}$/.test(database))
     throw new Error('数据库名称只能包含英文字母、数字和下划线，最多 48 字符。');
   const email = await ask('管理员邮箱', 'admin@ark.local');
@@ -56,10 +66,10 @@ try {
     await connection.end();
   }
   const values = {
-    NODE_ENV: 'development',
+    NODE_ENV: production ? 'production' : 'development',
     API_HOST: '127.0.0.1',
     API_PORT: '3000',
-    APP_ORIGIN: 'http://127.0.0.1:5173',
+    APP_ORIGIN: production ? 'http://127.0.0.1:3000' : 'http://127.0.0.1:5173',
     DATABASE_HOST: host,
     DATABASE_PORT: String(port),
     DATABASE_NAME: database,
@@ -77,14 +87,14 @@ try {
     DEMO_MODE: 'false',
   };
   await writeFile(
-    resolve(root, '.env'),
+    envFile,
     Object.entries(values)
       .map(([key, value]) => `${key}=${envValue(value)}`)
       .join('\n') + '\n',
     { mode: 0o600, flag: 'wx' },
   );
   console.log(
-    `\n安装配置已生成。\n管理员：${email}\n管理员密码：${adminPassword}\n开发运行：pnpm dev\n正式运行：pnpm build 后 pnpm start\n请保管管理员密码；数据库管理密码未保存。`,
+    `\n已生成 ${envName}。\n管理员：${email}\n管理员密码：${adminPassword}\n启动方式：${startup}\n请保管管理员密码；数据库管理密码未保存。`,
   );
 } catch (error) {
   console.error(error instanceof Error ? error.message : '安装失败。');

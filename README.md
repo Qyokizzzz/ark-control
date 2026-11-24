@@ -22,26 +22,29 @@ pnpm run setup
 pnpm dev
 ```
 
-安装向导使用你输入的数据库管理账号建立独立应用账号，管理员密码可自行输入或自动生成。管理账号密码不保存。已有 `.env` 不会覆盖。
+安装向导将开发配置写入项目根目录的 `.env.dev`。向导使用你输入的数据库管理账号建立独立应用账号，管理员密码可自行输入或自动生成，管理账号密码仅在安装时使用。
 
 向导会逐行显示问题，直接回车使用方括号中的默认值。请在可以输入的 PowerShell / Windows Terminal 中运行；如果启动器不能转发输入，进入项目目录直接运行 `node scripts/setup.mjs`。连接数据库时会显示进度，连接超时为 8 秒。
 
-打开 `http://127.0.0.1:5173`。正式运行：
+打开 `http://127.0.0.1:5173`。需要正式运行时，在项目根目录执行以下命令。
 
 ```sh
+pnpm run setup:prod
 pnpm build
 pnpm start
 ```
 
-正式运行的网页和 API 统一由 `http://127.0.0.1:3000` 提供；对应修改 `.env` 的 `APP_ORIGIN`。Windows 可双击 `start.cmd`。生产部署设 `NODE_ENV=production`，使用 HTTPS 反向代理，示例见 `deploy/Caddyfile.example`。
+正式运行读取 `.env.prod`，默认通过 `http://127.0.0.1:3000` 提供网页和 API。请在 `.env.prod` 填写实际的 `APP_ORIGIN`。Windows 可双击 `start.cmd`。公网生产部署设 `NODE_ENV=production` 并使用 HTTPS 反向代理，示例见 `deploy/Caddyfile.example`。
 
-也可以复制 `.env.example` 手动配置。`JWT_SECRET` 至少 32 字符，`ENCRYPTION_KEY` 必须为 64 位十六进制随机字符串。不要更换已经使用的加密密钥，否则历史机器人 Secret 和实例 RCON 密码无法解密。
+开发代理与 API 都优先读取 `.env.dev`。生产构建和 API 都优先读取 `.env.prod`。缺少对应文件时会读取旧 `.env`。安装向导也可用旧 `.env` 初始化对应文件，优先使用已有的目标文件。进程环境变量优先于文件中的同名项。
+
+可以复制 `.env.example` 手动配置。`JWT_SECRET` 至少 32 字符，`ENCRYPTION_KEY` 必须为 64 位十六进制随机字符串。沿用已有数据库时，请保留原来的加密密钥，以便读取历史机器人 Secret 和实例 RCON 密码。
 
 ## GitHub Actions 前后端部署
 
 GitHub Pages 可以发布浏览器前端。Nest API 和 MySQL 继续运行在自己的服务器，主机助手、QQ 回调和好友联机清单都连接 API 地址。用于正式商用时，请在自己的 HTTPS 站点托管管理后台。GitHub Pages 对商用 SaaS 有使用限制，也不建议通过 Pages 站点处理密码等敏感数据。[GitHub Pages 使用限制](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 
-工作流通过 SSH 将 Nest API 发布到 Linux 服务器并由 PM2 启动，健康检查通过后发布 Pages 前端。首次接入、仓库 Secrets、服务器持久目录和回滚见 [SSH 与 PM2 部署](docs/PM2-DEPLOYMENT.md)。
+GitHub 托管 Runner 构建前后端，Linux 自托管 Runner 在服务器本机发布 Nest API 并用 PM2 启动。健康检查通过后，工作流发布 GitHub Pages 前端。首次接入、仓库配置、服务器数据目录和回滚见 [GitHub Actions 与 PM2 部署](docs/PM2-DEPLOYMENT.md)。
 
 ## 接入游戏主机
 

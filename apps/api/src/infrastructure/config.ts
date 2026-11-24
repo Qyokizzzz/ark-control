@@ -3,8 +3,18 @@ import { loadEnvFile } from 'node:process';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 
+const requestedEnv = process.argv.find((arg) => arg === '--env=dev' || arg === '--env=prod');
+const production = requestedEnv
+  ? requestedEnv === '--env=prod'
+  : process.env.NODE_ENV === 'production';
+const envName = production ? '.env.prod' : '.env.dev';
 const envFile =
-  process.env.ARK_ENV_FILE ?? [resolve('.env'), resolve('../../.env')].find(existsSync);
+  process.env.ARK_ENV_FILE ??
+  (process.env.NODE_ENV === 'test' && !requestedEnv
+    ? undefined
+    : [resolve(envName), resolve('../..', envName), resolve('.env'), resolve('../../.env')].find(
+        existsSync,
+      ));
 if (envFile) loadEnvFile(envFile);
 
 const webOrigin = z
