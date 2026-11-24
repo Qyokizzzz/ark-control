@@ -1,0 +1,7 @@
+{
+  "FullName": "ArkControl Shop",
+  "Description": "ArkControl independent ASE chat shop",
+  "Version": 1.0,
+  "MinApiVersion": 3.55,
+  "Dependencies": []
+}

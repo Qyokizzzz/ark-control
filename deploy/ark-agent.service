@@ -1,0 +1,18 @@
+[Unit]
+Description=ARK Control host agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=steam
+WorkingDirectory=/opt/ark-control/apps/agent
+ExecStart=/usr/bin/node /opt/ark-control/apps/agent/dist/main.js --config /var/lib/ark-control/agent.json
+Restart=on-failure
+RestartSec=10
+KillMode=process
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

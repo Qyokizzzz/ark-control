@@ -1,0 +1,492 @@
+import { useCallback, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
+import { Link } from 'react-router';
+import { Alert, Box, Button, Divider, Stack, Typography } from '@mui/material';
+import { FloppyDiskIcon } from '@phosphor-icons/react';
+import {
+  CONFIG_SYNC_FEATURE,
+  GAME_BRANCHES,
+  INI_FILES,
+  shareableServerFiles,
+} from '@ark-control/common';
+import type {
+  Command,
+  ConfigSaveSummary,
+  Host,
+  Instance,
+  InstanceUpdateResult,
+  IniFile,
+  ServerFiles,
+} from '@ark-control/common';
+import { useTranslation } from 'react-i18next';
+import { request } from '@/api';
+import { focusPageAnchor } from '@/deployment';
+import {
+  basicGameFields,
+  basicIniAddresses,
+  configChangeLabel,
+  configChangeValue,
+  configGrid,
+  draftConfig,
+  imprintEstimate,
+  manualOverrides,
+  optionId,
+  readGameForm,
+  saveGameForm,
+} from '@/game-config';
+import type { DraftEntry } from '@/game-config';
+import AdvancedIniFields, { IniOverride } from './AdvancedIniFields';
+import FormField from './FormField';
+import Surface from './Surface';
+import { formatDate, useMutation } from './common';
+import type { Field, FormValues } from './common';
+
+const manualFields: { file: IniFile; field: Field }[] = [
+  {
+    file: 'settings',
+    field: {
+      key: 'manualSettings',
+      label: INI_FILES.settings,
+      kind: 'textarea',
+      maxLength: 50000,
+      helper:
+        '未写节标题的键归入 [ServerSettings]。服名覆盖使用 [SessionSettings] 下的 SessionName。',
+    },
+  },
+  {
+    file: 'game',
+    field: {
+      key: 'manualGame',
+      label: INI_FILES.game,
+      kind: 'textarea',
+      maxLength: 50000,
+      helper: '未写节标题的键归入游戏模式节。可以添加其他节和多条同名规则。',
+    },
+  },
+];
+
+export default function InstanceConfigPanel({
+  instance,
+  serverFiles,
+  disabled,
+  host,
+  syncTask,
+  saveSummary,
+  onSaved,
+}: {
+  instance: Instance;
+  serverFiles: ServerFiles[];
+  disabled: boolean;
+  host?: Host;
+  syncTask?: Command;
+  saveSummary?: ConfigSaveSummary;
+  onSaved: (summary: ConfigSaveSummary) => void;
+}) {
+  const { t } = useTranslation();
+  const mutate = useMutation();
+  const [draft, setDraft] = useState<ReturnType<typeof readGameForm>>(() => {
+    const values = readGameForm(instance.config);
+    return {
+      ...values,
+      basic: {
+        ...values.basic,
+        name: instance.name,
+        autoRestart: instance.autoRestart,
+        autoBranchUpdate: instance.autoBranchUpdate ?? false,
+        branch: instance.branch ?? 'public',
+        serverFileSource:
+          instance.serverFileSource === 'download' ? 'auto' : (instance.serverFileSource ?? 'auto'),
+      } satisfies FormValues,
+    };
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [lastSave, setLastSave] = useState<{
+    previousId?: string;
+    requestedId?: string;
+  }>();
+  const editableSource = !instance.installed && !instance.pid && !instance.serverFileId;
+  const editableBranch = editableSource && !instance.filesTouched;
+  const branch = editableBranch ? draft.basic.branch : (instance.branch ?? 'public');
+  const blocked = disabled || busy;
+  const overrides = useMemo(() => manualOverrides(draft.manual), [draft.manual]);
+  const estimate = imprintEstimate(
+    draftConfig(instance.config, draft.basic, draft.advanced, draft.manual),
+  );
+
+  const fields: Field[] = [
+    basicGameFields[0]!,
+    { key: 'name', label: '后台地图名称', required: true, maxLength: 80 },
+    ...basicGameFields.slice(1),
+    ...(editableBranch
+      ? [
+          {
+            key: 'branch',
+            label: 'Steam 版本分支',
+            kind: 'select' as const,
+            required: true,
+            options: GAME_BRANCHES.map(({ value, label }) => ({ value, label })),
+          },
+        ]
+      : []),
+    ...(editableSource
+      ? [
+          {
+            key: 'serverFileSource',
+            label: '服务端文件来源',
+            kind: 'select' as const,
+            options: [
+              { value: 'auto', label: '自动共用本机同分支文件，没有时下载' },
+              ...serverFiles
+                .filter(
+                  (file) =>
+                    file.hostId === instance.hostId &&
+                    file.branch === branch &&
+                    (shareableServerFiles(file) || file.id === instance.serverFileSource),
+                )
+                .map((file) => ({ value: file.id, label: file.name })),
+            ],
+          },
+        ]
+      : []),
+    { key: 'autoRestart', label: '自动拉起', kind: 'switch' },
+    { key: 'autoBranchUpdate', label: '自动跟随分支更新（备份后维护重启）', kind: 'switch' },
+  ];
+
+  const handleBasicChange = useCallback((key: string, value: FormValues[string]) => {
+    setDirty(true);
+    setDraft((current) => ({
+      ...current,
+      basic: {
+        ...current.basic,
+        ...(key === 'branch' ? { serverFileSource: 'auto' } : {}),
+        [key]: value,
+      },
+    }));
+  }, []);
+  const handleAdvancedChange = useCallback((id: string, entries: DraftEntry[]) => {
+    setDirty(true);
+    setDraft((current) => {
+      const advanced = new Map(current.advanced);
+      if (entries.length) advanced.set(id, entries);
+      else advanced.delete(id);
+      return { ...current, advanced };
+    });
+  }, []);
+  const handleManualChange = useCallback((file: IniFile, value: string) => {
+    setDirty(true);
+    setDraft((current) => ({ ...current, manual: { ...current.manual, [file]: value } }));
+  }, []);
+  const handleSubmit = useCallback(
+    async (event: FormEvent) => {
+      event.preventDefault();
+      if (blocked) return;
+      setError(null);
+      setBusy(true);
+      try {
+        const config = saveGameForm(instance.config, draft.basic, draft.advanced, draft.manual);
+        const updated = await mutate(
+          () =>
+            request<InstanceUpdateResult>(`/instances/${instance.id}`, 'PATCH', {
+              name: draft.basic.name,
+              autoRestart: draft.basic.autoRestart,
+              autoBranchUpdate: draft.basic.autoBranchUpdate,
+              ...(editableSource ? { serverFileSource: draft.basic.serverFileSource } : {}),
+              ...(editableBranch ? { branch: draft.basic.branch } : {}),
+              config,
+            }),
+          '游戏配置已保存到后台',
+        );
+        setLastSave({
+          previousId: instance.configSyncCommandId,
+          requestedId: updated.configSyncCommandId,
+        });
+        onSaved(updated.configSave);
+        setDirty(false);
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : '保存游戏配置失败。');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [blocked, draft, editableBranch, editableSource, instance, mutate, onSaved],
+  );
+
+  // A dashboard refresh already in flight at submit time can still contain the previous receipt.
+  const awaitingRefresh =
+    !!lastSave?.requestedId &&
+    instance.configSyncCommandId === lastSave.previousId &&
+    lastSave.requestedId !== instance.configSyncCommandId;
+  return (
+    <Box component="form" onSubmit={handleSubmit} aria-label={t('游戏配置')}>
+      <Surface>
+        <Stack
+          component="section"
+          aria-labelledby="basic-config-title"
+          spacing={2.5}
+          sx={sectionSpacing}
+        >
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            gap={1}
+            justifyContent="space-between"
+            alignItems={{ sm: 'center' }}
+          >
+            <Box>
+              <Typography variant="h4" component="h2" id="basic-config-title">
+                {t('基础配置')}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                {t('设置 Steam 服名、人数和常用倍率。保存后，下次启动地图时应用。')}
+              </Typography>
+            </Box>
+            <Stack direction="row" gap={1} sx={{ flexShrink: 0 }}>
+              <Button
+                size="small"
+                component="a"
+                href="#advanced-config-title"
+                onClick={focusPageAnchor}
+              >
+                {t('高级配置')}
+              </Button>
+              <Button
+                size="small"
+                component="a"
+                href="#manual-config-title"
+                onClick={focusPageAnchor}
+              >
+                {t('手写配置')}
+              </Button>
+            </Stack>
+          </Stack>
+          <Box sx={configGrid}>
+            {fields.map((field) => {
+              const address = basicIniAddresses[field.key];
+              return (
+                <Stack key={field.key} spacing={0.5} sx={{ minWidth: 0 }}>
+                  <FormField
+                    field={field}
+                    value={draft.basic[field.key]}
+                    onChange={(value) => handleBasicChange(field.key, value)}
+                    disabled={blocked}
+                    compact
+                  />
+                  {address && (
+                    <IniOverride
+                      entries={overrides.get(optionId(address))}
+                      secret={field.kind === 'password'}
+                    />
+                  )}
+                </Stack>
+              );
+            })}
+          </Box>
+        </Stack>
+        <Divider />
+        <Stack
+          component="section"
+          aria-labelledby="advanced-config-title"
+          spacing={2.5}
+          sx={sectionSpacing}
+        >
+          <Box>
+            <Typography variant="h4" component="h2" id="advanced-config-title" tabIndex={-1}>
+              {t('高级配置')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {t('按玩法展开配置，或直接搜索。未修改的高级项继续使用游戏默认值。')}
+            </Typography>
+          </Box>
+          <AdvancedIniFields
+            instance={instance}
+            entries={draft.advanced}
+            overrides={overrides}
+            disabled={blocked}
+            babyMature={draft.basic.babyMature ?? ''}
+            estimate={estimate}
+            onMaturityChange={(value) => handleBasicChange('babyMature', value)}
+            onChange={handleAdvancedChange}
+          />
+        </Stack>
+        <Divider />
+        <Stack
+          component="section"
+          aria-labelledby="manual-config-title"
+          spacing={2.5}
+          sx={sectionSpacing}
+        >
+          <Box>
+            <Typography variant="h4" component="h2" id="manual-config-title" tabIndex={-1}>
+              {t('手写配置')}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {t('同一文件、同一 INI 节里的同名键，以手写值为准。移除手写项即可恢复表单值。')}
+            </Typography>
+          </Box>
+          <Box
+            sx={{
+              ...configGrid,
+              gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'repeat(2, minmax(0, 1fr))' },
+            }}
+          >
+            {manualFields.map(({ file, field }) => (
+              <Box
+                key={file}
+                sx={{ minWidth: 0, '& textarea': { fontFamily: 'monospace', fontSize: 13 } }}
+              >
+                <FormField
+                  field={field}
+                  value={draft.manual[file]}
+                  onChange={(value) => handleManualChange(file, String(value))}
+                  disabled={blocked}
+                  compact
+                />
+              </Box>
+            ))}
+          </Box>
+        </Stack>
+      </Surface>
+      <Stack spacing={1} sx={{ position: 'sticky', bottom: { xs: 8, sm: 16 }, zIndex: 2, mt: 2 }}>
+        {error && <Alert severity="error">{error}</Alert>}
+        <Surface sx={{ px: { xs: 1.5, sm: 2.5 }, py: 1.25, boxShadow: 2 }}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1.5}
+            justifyContent="space-between"
+            alignItems={{ xs: 'stretch', sm: 'flex-start' }}
+          >
+            {dirty ? (
+              <Typography variant="body2" aria-live="polite">
+                {t('有尚未保存的修改。')}
+              </Typography>
+            ) : (
+              <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
+                <ConfigSyncStatus
+                  task={awaitingRefresh ? undefined : syncTask}
+                  waiting={awaitingRefresh}
+                  host={host}
+                />
+                {saveSummary && <SavePreview summary={saveSummary} />}
+              </Stack>
+            )}
+            <Button
+              type="submit"
+              variant="contained"
+              startIcon={<FloppyDiskIcon size={18} />}
+              disabled={blocked}
+              sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {t(busy ? '正在保存…' : '保存配置')}
+            </Button>
+          </Stack>
+        </Surface>
+      </Stack>
+    </Box>
+  );
+}
+
+const sectionSpacing = { p: { xs: 2, sm: 3, lg: 4 }, minWidth: 0 };
+
+function SavePreview({ summary }: { summary: ConfigSaveSummary }) {
+  const { t } = useTranslation();
+  if (!summary.total)
+    return (
+      <Typography variant="body2" color="text.secondary">
+        {t('本次保存没有修改配置项。')}
+      </Typography>
+    );
+  const remaining = summary.total - summary.changes.length;
+  return (
+    <Box sx={{ minWidth: 0 }}>
+      <Stack
+        component="ul"
+        aria-label={t('本次修改')}
+        spacing={0.25}
+        sx={{ m: 0, p: 0, listStyle: 'none' }}
+      >
+        {summary.changes.map((change, index) => {
+          const label = configChangeLabel(change, t);
+          const before = configChangeValue(change.before, !!change.redacted, t);
+          const after = configChangeValue(change.after, !!change.redacted, t);
+          const line = change.key ? `${label} · ${before} → ${after}` : label;
+          return (
+            <Stack component="li" key={index} direction="row" alignItems="baseline" spacing={0.5}>
+              <Typography variant="body2" title={line} noWrap sx={{ minWidth: 0 }}>
+                {line.replace(/\r?\n/g, ' · ')}
+              </Typography>
+              {remaining > 0 && index === summary.changes.length - 1 && (
+                <Typography
+                  variant="body2"
+                  aria-label={t('还有 {{count}} 项修改', { count: remaining })}
+                  title={t('还有 {{count}} 项修改', { count: remaining })}
+                >
+                  …
+                </Typography>
+              )}
+            </Stack>
+          );
+        })}
+      </Stack>
+      {summary.auditId && (
+        <Button
+          component={Link}
+          to={`/logs?tab=audit&entry=${summary.auditId}`}
+          size="small"
+          sx={{ mt: 0.25, px: 0 }}
+        >
+          {t('查看完整记录')}
+        </Button>
+      )}
+    </Box>
+  );
+}
+
+function ConfigSyncStatus({
+  task,
+  waiting,
+  host,
+}: {
+  task?: Command;
+  waiting: boolean;
+  host?: Host;
+}) {
+  const { t } = useTranslation();
+  if (task?.status === 'succeeded' && task.result?.verified === true) {
+    const { settingsPath, gamePath } = task.result;
+    return (
+      <Box sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+        <Typography variant="body2" color="success.main" role="status">
+          {t('主机已写入并校验 INI。')} · {formatDate(task.completedAt)}
+        </Typography>
+        <Box component="details" sx={{ typography: 'caption', '& summary': { cursor: 'pointer' } }}>
+          <summary>{t('查看配置文件路径')}</summary>
+          <div>{String(settingsPath)}</div>
+          <div>{String(gamePath)}</div>
+        </Box>
+      </Box>
+    );
+  }
+  let message = '保存后同步到游戏主机，地图下次启动时生效。';
+  if (waiting || task?.status === 'waiting-agent') {
+    if (host?.status !== 'online') message = '配置已保存，等待游戏主机上线后写入。';
+    else if (!host.features?.includes(CONFIG_SYNC_FEATURE))
+      message = '配置已保存，请更新并重启游戏主机上的助手以写入 INI。';
+    else message = '配置已保存，等待主机助手写入 INI。';
+  } else if (task?.status === 'leased' || task?.status === 'executing') {
+    message = '主机正在写入并校验 INI。';
+  } else if (task?.status === 'failed' || task?.status === 'cancelled') {
+    message = '主机未确认写入。再次保存可重试。';
+  }
+  return (
+    <Typography
+      variant="body2"
+      color={task?.error ? 'error.main' : 'text.secondary'}
+      role="status"
+      sx={{ minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}
+    >
+      {t(message)}
+      {task?.error && `\n${task.error}`}
+    </Typography>
+  );
+}

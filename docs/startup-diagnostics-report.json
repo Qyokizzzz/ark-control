@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "checks": [
+    "PowerShell 5.1 只读诊断识别真实测试进程、RCON 监听及日志，配置未改、进程未退出，密码未泄露",
+    "桌面地图详情在超时后保留具体 RCON 原因，不把存活进程误报为启动成功",
+    "390px 手机页面保留超时错误与日志路径，无横向溢出",
+    "地图列表中的超时卡片同样显示 RCON 错误，浏览器无脚本异常"
+  ],
+  "note": "PowerShell 5.1 and a real Windows fixture process were exercised. Browser API responses were mocked. No real ASE process or remote game computer was tested.",
+  "verifiedAt": "2026-11-05T08:34:34.054Z",
+  "unitTests": 92,
+  "unitFiles": 16,
+  "previews": ["previews/rcon-timeout-desktop.png", "previews/rcon-timeout-mobile.png"],
+  "scope": "This targeted diagnostic verification supplements the earlier 59-check full integration run, which was not rerun for this diagnostic update."
+}

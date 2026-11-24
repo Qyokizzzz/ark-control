@@ -1,0 +1,6 @@
+packages:
+  - apps/*
+  - common
+allowBuilds:
+  esbuild: true
+  '@nestjs/core': true

@@ -1,0 +1,56 @@
+import type { RouteObject } from 'react-router';
+import { Shell } from '@/layout';
+import {
+  BackupsPage,
+  PlayersPage,
+  ShopPage,
+  ConnectionsPage,
+  ClusterSettingsPage,
+  BotsPage,
+  DashboardPage,
+  HostsPage,
+  InstanceDetailsPage,
+  InstancesPage,
+  ServerFilesPage,
+  ServerPluginsPage,
+  LoginPage,
+  LogsPage,
+  NotFoundPage,
+  SchedulesPage,
+  SettingsPage,
+  SubscriptionsPage,
+  WorkspacesPage,
+  TeamPage,
+  PlatformPage,
+} from '@/pages';
+
+const routes: RouteObject[] = [
+  { path: '/login', element: <LoginPage /> },
+  {
+    path: '/',
+    element: <Shell />,
+    children: [
+      { index: true, element: <DashboardPage /> },
+      { path: 'instances', element: <InstancesPage /> },
+      { path: 'instances/plugins', element: <ServerPluginsPage /> },
+      { path: 'instances/clusters', element: <ClusterSettingsPage /> },
+      { path: 'server-files', element: <ServerFilesPage /> },
+      { path: 'instances/:id', element: <InstanceDetailsPage /> },
+      { path: 'hosts', element: <HostsPage /> },
+      { path: 'players', element: <PlayersPage /> },
+      { path: 'shop', element: <ShopPage /> },
+      { path: 'connections', element: <ConnectionsPage /> },
+      { path: 'subscriptions', element: <SubscriptionsPage /> },
+      { path: 'bots', element: <BotsPage /> },
+      { path: 'backups', element: <BackupsPage /> },
+      { path: 'logs', element: <LogsPage /> },
+      { path: 'schedules', element: <SchedulesPage /> },
+      { path: 'settings', element: <SettingsPage /> },
+      { path: 'workspaces', element: <WorkspacesPage /> },
+      { path: 'team', element: <TeamPage /> },
+      { path: 'platform', element: <PlatformPage /> },
+      { path: '*', element: <NotFoundPage /> },
+    ],
+  },
+];
+export default routes;

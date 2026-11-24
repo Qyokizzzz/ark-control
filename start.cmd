@@ -1,0 +1,19 @@
+@echo off
+cd /d "%~dp0"
+where pnpm >nul 2>nul
+if errorlevel 1 (
+  echo Please install Node.js and pnpm first. See README.md.
+  pause
+  exit /b 1
+)
+if not exist node_modules (
+  call pnpm install
+  if errorlevel 1 exit /b 1
+)
+if not exist .env (
+  call pnpm run setup
+  if errorlevel 1 exit /b 1
+)
+call pnpm build
+if errorlevel 1 exit /b 1
+call pnpm start

@@ -1,0 +1,56 @@
+{
+  "name": "ark-control-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,green \"pnpm --filter @ark-control/api dev\" \"pnpm --filter @ark-control/web dev\"",
+    "build": "pnpm run build:connect && pnpm -r build",
+    "build:connect": "node scripts/build-connect.mjs",
+    "build:agent-package": "node scripts/build-backend.mjs agent && node scripts/build-agent-package.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run --configLoader runner",
+    "test:watch": "vitest --configLoader runner",
+    "test:e2e": "node scripts/verify-local.mjs",
+    "test:rcon": "node scripts/verify-rcon-launch.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "setup": "node scripts/setup.mjs",
+    "start": "pnpm --filter @ark-control/api start",
+    "agent": "pnpm --filter @ark-control/agent start",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.18.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
+    "mysql2": "^3.15.3",
+    "prettier": "^3.6.2",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yaml,yml,css,html}": "prettier --write"
+  },
+  "type": "module"
+}

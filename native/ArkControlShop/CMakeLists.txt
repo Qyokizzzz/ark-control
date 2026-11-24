@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.24)
+project(ArkControlShop LANGUAGES CXX)
+
+if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT MSVC)
+  message(FATAL_ERROR "Build ArkControlShop using the Windows x64 MSVC toolchain")
+endif()
+
+set(ARKAPI_SDK "" CACHE PATH "ASE Framework-ArkServerApi checkout or SDK")
+find_path(ARKAPI_INCLUDE API/ARK/Ark.h HINTS "${ARKAPI_SDK}" "${ARKAPI_SDK}/include" "${ARKAPI_SDK}/version/Core/Public" REQUIRED)
+find_library(ARKAPI_LIBRARY ArkApi HINTS "${ARKAPI_SDK}" "${ARKAPI_SDK}/lib" "${ARKAPI_SDK}/out_lib" REQUIRED)
+
+add_library(ArkControlShop SHARED Plugin.cpp)
+target_compile_features(ArkControlShop PRIVATE cxx_std_20)
+target_include_directories(ArkControlShop SYSTEM PRIVATE "${ARKAPI_INCLUDE}")
+target_compile_definitions(ArkControlShop PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_compile_options(ArkControlShop PRIVATE /utf-8 /bigobj)
+target_link_libraries(ArkControlShop PRIVATE "${ARKAPI_LIBRARY}" ole32)
+set_property(TARGET ArkControlShop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+install(TARGETS ArkControlShop RUNTIME DESTINATION ArkControlShop)
+install(FILES PluginInfo.json DESTINATION ArkControlShop)

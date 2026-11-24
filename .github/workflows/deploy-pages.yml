@@ -1,0 +1,107 @@
+name: Deploy Ark Control
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ark-control-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref_name == github.event.repository.default_branch && (vars.VITE_API_ORIGIN != '' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/configure-pages@v5
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          require-lockfile: true
+          cache: true
+        env:
+          HUSKY: '0'
+      - name: Build web application
+        run: pnpm --filter @ark-control/web run build --mode github-pages
+        env:
+          VITE_API_ORIGIN: ${{ vars.VITE_API_ORIGIN }}
+      - name: Package management API
+        run: |
+          pnpm --filter @ark-control/api run typecheck
+          pnpm --filter @ark-control/api run build
+          release_dir="$RUNNER_TEMP/ark-control-release"
+          pnpm --filter @ark-control/api --prod deploy "$release_dir/apps/api"
+          mkdir -p "$release_dir/apps/api/dist"
+          cp -a apps/api/dist/. "$release_dir/apps/api/dist/"
+          node --input-type=commonjs - "$release_dir/apps/api" <<'NODE'
+          const { realpathSync } = require('node:fs');
+          const { createRequire } = require('node:module');
+          const { isAbsolute, join, relative, sep } = require('node:path');
+          const packageDir = realpathSync(process.argv[2]);
+          const from = createRequire(join(packageDir, 'package.json'));
+          for (const name of Object.keys(from('./package.json').dependencies)) {
+            if (name === '@ark-control/common') continue; // Included in the API bundle.
+            const target = relative(packageDir, realpathSync(from.resolve(name)));
+            if (isAbsolute(target) || target === '..' || target.startsWith('..' + sep)) {
+              throw new Error(`Runtime dependency ${name} is outside the release`);
+            }
+          }
+          NODE
+          tar -czf "$RUNNER_TEMP/ark-control-backend.tar.gz" -C "$release_dir" apps
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ark-control-backend
+          path: ${{ runner.temp }}/ark-control-backend.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: apps/web/dist
+
+  backend:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: backend
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ark-control-backend
+          path: ${{ runner.temp }}/ark-control-backend
+      - name: Deploy API over SSH and start PM2
+        run: bash deploy/publish-backend.sh "$RUNNER_TEMP/ark-control-backend/ark-control-backend.tar.gz"
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_DEPLOY_DIR: ${{ vars.SERVER_DEPLOY_DIR }}
+
+  deploy:
+    needs: [build, backend]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish web application
+        id: deployment
+        uses: actions/deploy-pages@v4
