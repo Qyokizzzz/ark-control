@@ -1,6 +1,6 @@
 # GitHub Actions 与 PM2 部署
 
-将项目内容提交到仓库根目录。在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。工作流 **Deploy Ark Control** 在默认分支上运行。GitHub 托管 Runner 构建前后端，自托管 Runner 下载发布包并在阿里云 ECS 本机发布 API。API 健康检查通过后发布 Pages。
+将项目内容提交到仓库根目录。在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。工作流 **Deploy Ark Control** 在默认分支上运行。GitHub 托管 Runner 拉取源码并构建前后端，随 API 发布包上传部署脚本。自托管 Runner 下载这份产物并在阿里云 ECS 本机发布 API。API 健康检查通过后发布 Pages。
 
 ## 仓库配置
 

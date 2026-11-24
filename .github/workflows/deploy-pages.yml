@@ -78,11 +78,14 @@ jobs:
             }
           }
           NODE
-          tar -czf "$RUNNER_TEMP/ark-control-backend.tar.gz" -C "$release_dir" apps
+          artifact_dir="$RUNNER_TEMP/ark-control-backend"
+          mkdir -p "$artifact_dir"
+          tar -czf "$artifact_dir/ark-control-backend.tar.gz" -C "$release_dir" apps
+          cp deploy/publish-backend.sh deploy/rollout-backend.mjs "$artifact_dir/"
       - uses: actions/upload-artifact@v4
         with:
           name: ark-control-backend
-          path: ${{ runner.temp }}/ark-control-backend.tar.gz
+          path: ${{ runner.temp }}/ark-control-backend
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
@@ -96,15 +99,14 @@ jobs:
     timeout-minutes: 10
     environment: backend
     steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: ark-control-backend
           path: ${{ runner.temp }}/ark-control-backend
       - name: Deploy API locally and start PM2
-        run: bash deploy/publish-backend.sh "$RUNNER_TEMP/ark-control-backend/ark-control-backend.tar.gz"
+        run: |
+          artifact_dir="$RUNNER_TEMP/ark-control-backend"
+          bash "$artifact_dir/publish-backend.sh" "$artifact_dir/ark-control-backend.tar.gz"
         env:
           SERVER_DEPLOY_DIR: ${{ vars.SERVER_DEPLOY_DIR }}
 
