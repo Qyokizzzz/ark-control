@@ -92,7 +92,7 @@ jobs:
 
   backend:
     needs: build
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     environment: backend
     steps:
