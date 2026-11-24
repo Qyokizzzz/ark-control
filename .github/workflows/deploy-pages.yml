@@ -31,8 +31,40 @@ jobs:
             exit 1
           fi
 
-  build:
+  build-agent:
     needs: check
+    if: needs.check.outputs.configured == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          architecture: x64
+      - uses: pnpm/setup@v3
+        with:
+          node-version-file: false
+          require-lockfile: true
+          cache: true
+        env:
+          HUSKY: '0'
+      - name: Build Windows x64 host agent
+        run: pnpm run build:agent-package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ark-control-windows-agent
+          path: |
+            artifacts/ArkHostAgent-Windows-x64.zip
+            artifacts/ArkHostAgent-Windows-x64.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+          retention-days: 3
+
+  build:
+    needs: [check, build-agent]
     if: needs.check.outputs.configured == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -56,11 +88,17 @@ jobs:
         run: |
           api_origin=$(node deploy/server-address.mjs)
           VITE_API_ORIGIN="$api_origin" pnpm --filter @ark-control/web run build --mode github-pages
-      - name: Package management API
+      - uses: actions/download-artifact@v4
+        with:
+          name: ark-control-windows-agent
+          path: ${{ runner.temp }}/ark-control-release/artifacts
+      - name: Package management API and Windows host agent
         run: |
+          release_dir="$RUNNER_TEMP/ark-control-release"
+          test -s "$release_dir/artifacts/ArkHostAgent-Windows-x64.zip"
+          (cd "$release_dir/artifacts" && sha256sum --check ArkHostAgent-Windows-x64.zip.sha256)
           pnpm --filter @ark-control/api run typecheck
           pnpm --filter @ark-control/api run build
-          release_dir="$RUNNER_TEMP/ark-control-release"
           pnpm --filter @ark-control/api --prod deploy "$release_dir/apps/api"
           mkdir -p "$release_dir/apps/api/dist"
           cp -a apps/api/dist/. "$release_dir/apps/api/dist/"
@@ -80,7 +118,7 @@ jobs:
           NODE
           artifact_dir="$RUNNER_TEMP/ark-control-backend"
           mkdir -p "$artifact_dir"
-          tar -czf "$artifact_dir/ark-control-backend.tar.gz" -C "$release_dir" apps
+          tar -czf "$artifact_dir/ark-control-backend.tar.gz" -C "$release_dir" apps artifacts
           cp deploy/publish-backend.sh deploy/rollout-backend.mjs "$artifact_dir/"
       - uses: actions/upload-artifact@v4
         with:

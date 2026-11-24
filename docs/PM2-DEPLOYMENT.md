@@ -1,6 +1,6 @@
 # GitHub Actions 与 PM2 部署
 
-将项目内容提交到仓库根目录。在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。工作流 **Deploy Ark Control** 在默认分支上运行。GitHub 托管 Runner 拉取源码并构建前后端，随 API 发布包上传部署脚本。自托管 Runner 下载这份产物并在阿里云 ECS 本机发布 API。API 健康检查通过后发布 Pages。
+将项目内容提交到仓库根目录。在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。工作流 **Deploy Ark Control** 在默认分支上运行。GitHub 托管 Windows Runner 构建 Windows x64 主机助手，Linux Runner 校验 ZIP 并将它随 API 打包。自托管 Runner 下载发布包和部署脚本，在阿里云 ECS 本机发布 API。API 健康检查通过后发布 Pages。
 
 ## 仓库配置
 
@@ -22,11 +22,17 @@
    WEB_ORIGIN=https://your-account.github.io
    ```
 
-4. 将已有的 Windows 主机助手包和独立商店插件包放进 `shared/artifacts/`。使用好友联机时，将已构建的 `ArkConnect.exe` 和 EasyTier 组件分别放到 `shared/native/ArkConnect/dist/` 和 `shared/native/ArkConnect/vendor/`。这些目录在后续发布中持续使用。
+4. 将独立商店插件包放进 `shared/artifacts/`。使用好友联机时，将已构建的 `ArkConnect.exe` 和 EasyTier 组件分别放到 `shared/native/ArkConnect/dist/` 和 `shared/native/ArkConnect/vendor/`。这些目录在后续发布中持续使用。
 5. 从手工部署或另一个 Linux 用户切换时，用原用户停止旧后台并释放 `API_PORT`。若旧后台由 PM2 管理，可用 `pm2 delete ark-control-api` 移除旧进程。在 Actions 运行 **Deploy Ark Control**，之后推送默认分支会自动部署。Pages 地址形如 `https://your-account.github.io/ark-control/#/hosts`。跨站登录续期需要浏览器支持分区 Cookie。
+
+## Windows 主机助手下载
+
+部署时安装包写入 `<部署目录>/releases/<发布标识>/artifacts/ArkHostAgent-Windows-x64.zip`，PM2 启动 API 时会在默认配置下使用这一版本的安装包。有接入权限的账号可在「主机管理」下载，API 会把 `shared/.env.prod` 中的公网 `APP_ORIGIN` 写入下载包。
+
+如果 `AGENT_WINDOWS_PACKAGE_PATH` 指向自定义位置，API 继续使用该位置。去掉自定义路径就会随正式发布更新。
 
 ## 运行与故障检查
 
-PM2 进程名为 `ark-control-api`。工作流先校验和解包，再由 PM2 启动新版本，核对 `/api/health` 中的版本标识。失败时尝试恢复上一个已发布版本，并停止本次 Pages 发布。健康检查通过后调用 `pm2 save`，保留当前和上一个发布目录。配置、数据和下载组件留在 `shared`，MySQL 沿用服务器的实例。版本回滚恢复程序文件。
+PM2 进程名为 `ark-control-api`。工作流先校验和解包，再由 PM2 启动新版本，核对 `/api/health` 中的版本标识。失败时尝试恢复上一个已发布版本，并停止本次 Pages 发布。健康检查通过后调用 `pm2 save`，保留当前和上一个发布目录。配置、数据和手动上传的下载组件留在 `shared`，MySQL 沿用服务器的实例。版本回滚会恢复对应版本的 API 和主机助手下载。
 
 以部署用户执行 `pm2 status` 或 `pm2 logs ark-control-api` 查看状态。需要开机恢复时，在服务器上执行一次 `pm2 startup`，按 PM2 输出安装启动服务。[PM2 启动恢复说明](https://doc.pm2.io/en/runtime/guide/startup-hook/)

@@ -12,7 +12,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout } from 'node:timers/promises';
 import { parseEnv, promisify } from 'node:util';
@@ -20,6 +20,7 @@ import { parseEnv, promisify } from 'node:util';
 const run = promisify(execFile);
 const releasePattern = /^[a-f0-9]{40}-\d+-\d+$/;
 const app = 'ark-control-api';
+const agentPackageName = 'ArkHostAgent-Windows-x64.zip';
 const [directory, id, digest] = process.argv.slice(-3);
 const [major, minor] = process.versions.node.split('.').map(Number);
 
@@ -93,6 +94,12 @@ async function deploy(signal) {
     throw new Error('releases 需要是部署目录下的本地目录。');
 
   const entry = (revision) => join(releases, revision, 'apps', 'api', 'dist', 'main.js');
+  const agentPackage = (revision) => join(releases, revision, 'artifacts', agentPackageName);
+  const configuredAgentPackage =
+    process.env.AGENT_WINDOWS_PACKAGE_PATH ?? env.AGENT_WINDOWS_PACKAGE_PATH;
+  const useReleaseAgentPackage =
+    configuredAgentPackage === undefined ||
+    resolve(cwd, configuredAgentPackage) === join(shared, 'artifacts', agentPackageName);
   const previous = (await optional(readFile(marker, 'utf8')))?.trim() ?? '';
   if (
     previous &&
@@ -127,8 +134,17 @@ async function deploy(signal) {
   if (await optional(stat(release)))
     throw new Error('发布目录已存在，请重新运行 Actions 生成新的发布标识。');
   const stage = await mkdtemp(join(releases, '.upload-'));
-  const start = (revision) =>
-    pm2(
+  const start = async (revision) => {
+    const variables = {
+      ...process.env,
+      NODE_ENV: 'production',
+      ARK_ENV_FILE: envFile,
+      ARK_RELEASE_ID: revision,
+    };
+    const packagePath = agentPackage(revision);
+    if (useReleaseAgentPackage && (await optional(stat(packagePath)))?.isFile())
+      variables.AGENT_WINDOWS_PACKAGE_PATH = packagePath;
+    return pm2(
       [
         'start',
         entry(revision),
@@ -140,8 +156,9 @@ async function deploy(signal) {
         process.execPath,
         '--time',
       ],
-      { ...process.env, NODE_ENV: 'production', ARK_ENV_FILE: envFile, ARK_RELEASE_ID: revision },
+      variables,
     );
+  };
   let changed = false;
   let unpacked = false;
   try {
@@ -156,13 +173,18 @@ async function deploy(signal) {
     unpacked = true;
     await run('tar', ['-xzf', archive, '-C', release, '--no-same-owner'], { signal });
     const api = join(release, 'apps', 'api');
-    const [manifest, dependencies, main] = await Promise.all(
-      ['package.json', 'node_modules', 'dist/main.js'].map((path) =>
-        optional(stat(join(api, path))),
-      ),
+    const [manifest, dependencies, main, windowsAgent] = await Promise.all(
+      [
+        join(api, 'package.json'),
+        join(api, 'node_modules'),
+        join(api, 'dist', 'main.js'),
+        agentPackage(id),
+      ].map((path) => optional(stat(path))),
     );
     if (!manifest?.isFile() || !dependencies?.isDirectory() || !main?.isFile())
       throw new Error('发布包缺少 API 入口或运行依赖。');
+    if (!windowsAgent?.isFile() || windowsAgent.size === 0)
+      throw new Error('发布包缺少 Windows 主机助手 ZIP。');
     await run(process.execPath, ['--check', join(api, 'dist', 'main.js')], { signal });
     const next = join(stage, 'next-release');
     await writeFile(next, `${id}\n`, { mode: 0o600 });
