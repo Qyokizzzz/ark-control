@@ -83,6 +83,13 @@ http.interceptors.response.use(
             .then((text) => JSON.parse(text) as ApiEnvelope<null>)
             .catch(() => undefined)
         : error.response?.data;
+    console.warn('[HTTP 请求最终失败]', {
+      method: request?.method,
+      path: request?.url?.split(/[?#]/)[0],
+      status: error.response?.status,
+      axiosCode: error.code,
+      apiCode: payload?.code,
+    });
     return Promise.reject(
       new Error(
         payload?.message ??
