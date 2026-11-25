@@ -13,7 +13,7 @@ import {
 } from '@mui/material';
 import { ArrowRightIcon, GearSixIcon, LinkIcon, PlugIcon, PlusIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
-import { effectiveGameConfig } from '@ark-control/common';
+import { effectiveGameConfig, instanceTarget } from '@ark-control/common';
 import { useWorkspaceStore } from '@/store';
 import { useWorkspaceCan, useWorkspaceSelection } from '@/store/workspace-selection';
 import {
@@ -26,6 +26,7 @@ import {
   matches,
 } from '@/components';
 import { NewInstanceDialog } from '@/components';
+import ChangeClusterDialog from '@/components/ChangeClusterDialog';
 
 function publicEndpoint(address: string, queryPort: number) {
   const raw = address
@@ -57,12 +58,18 @@ export default function Instances() {
     can('maps.create', { kind: 'host', hostId: host.id }),
   );
   const [create, setCreate] = useState(false);
+  const [changingCluster, setChangingCluster] = useState<string | null>(null);
   const [addressesOpen, setAddressesOpen] = useState(false);
   const handleCreateClick = useCallback(() => setCreate(true), []);
-  const instances =
-    data?.instances.filter((item) => matches(query, item.name, item.mapLabel, item.clusterId)) ??
-    [];
-  const runningInstances = data?.instances.filter((item) => item.status === 'running') ?? [];
+  const ordered = [...(data?.instances ?? [])].sort(
+    (left, right) =>
+      right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
+  );
+  const instances = ordered.filter((item) =>
+    matches(query, item.name, item.mapLabel, item.clusterId),
+  );
+  const runningInstances = ordered.filter((item) => item.status === 'running');
+  const clusterMap = ordered.find((instance) => instance.id === changingCluster);
   return (
     <>
       <PageHeading
@@ -137,6 +144,36 @@ export default function Instances() {
                 {instance.mapLabel} ·{' '}
                 {data?.hosts.find((host) => host.id === instance.hostId)?.name}
               </Typography>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                gap={1}
+                sx={{ mb: 2 }}
+              >
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ overflowWrap: 'anywhere' }}
+                >
+                  {instance.clusterId || t('独立地图')}
+                </Typography>
+                {can('maps.configure', instanceTarget(instance)) && (
+                  <span
+                    title={
+                      instance.status !== 'stopped' || instance.pid ? t('请先停止地图') : undefined
+                    }
+                  >
+                    <Button
+                      size="small"
+                      disabled={instance.status !== 'stopped' || !!instance.pid}
+                      onClick={() => setChangingCluster(instance.id)}
+                    >
+                      {t('变更互通组')}
+                    </Button>
+                  </span>
+                )}
+              </Stack>
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 3 }}>
                 {[
                   ['CPU', `${instance.cpuPercent.toFixed(1)}%`],
@@ -188,6 +225,9 @@ export default function Instances() {
         </Surface>
       )}
       {create && <NewInstanceDialog onClose={() => setCreate(false)} />}
+      {clusterMap && (
+        <ChangeClusterDialog instance={clusterMap} onClose={() => setChangingCluster(null)} />
+      )}
       <Dialog open={addressesOpen} onClose={() => setAddressesOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>{t('已启动地图地址')}</DialogTitle>
         <DialogContent>

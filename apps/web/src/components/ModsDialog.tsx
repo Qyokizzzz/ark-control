@@ -23,6 +23,7 @@ import type { SelectChangeEvent } from '@mui/material';
 import { ArrowDownIcon, ArrowUpIcon, XIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { workshopById, workshopCatalog } from '@/game-config/workshop';
+import ClusterPresetActions from './ClusterPresetActions';
 
 const maxMods = 60;
 
@@ -41,13 +42,17 @@ function mergeIds(selected: string[], input: string) {
 export default function ModsDialog({
   initial,
   overridden,
+  clusterId,
+  presetModOverride,
   onClose,
   onSave,
 }: {
   initial: string[];
   overridden: boolean;
+  clusterId: string;
+  presetModOverride: boolean;
   onClose: () => void;
-  onSave: (ids: string[]) => Promise<unknown>;
+  onSave: (ids: string[], loadedFromGroup: boolean) => Promise<unknown>;
 }) {
   const { t } = useTranslation();
   const selectId = useId();
@@ -56,6 +61,7 @@ export default function ModsDialog({
   const [fieldError, setFieldError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loadedFromGroup, setLoadedFromGroup] = useState(false);
   const selected = ids.filter((id) => workshopById.has(id));
 
   const handleCatalogChange = useCallback(
@@ -109,7 +115,7 @@ export default function ModsDialog({
       setBusy(true);
       setSaveError('');
       try {
-        await onSave(merged);
+        await onSave(merged, loadedFromGroup);
         onClose();
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : '保存失败。');
@@ -117,7 +123,7 @@ export default function ModsDialog({
         setBusy(false);
       }
     },
-    [ids, manual, onSave, onClose],
+    [ids, manual, loadedFromGroup, onSave, onClose],
   );
 
   return (
@@ -126,9 +132,32 @@ export default function ModsDialog({
         <DialogTitle>{t('编辑模组')}</DialogTitle>
         <DialogContent>
           <Stack gap={2} sx={{ pt: 1 }}>
-            {overridden && (
+            <ClusterPresetActions
+              clusterId={clusterId}
+              disabled={busy}
+              modOverride={presetModOverride}
+              getDraft={(mode) => ({
+                kind: 'mods',
+                modIds: mode === 'save' ? mergeIds(ids, manual) : ids,
+              })}
+              onError={setFieldError}
+              onLoad={(preset) => {
+                if (preset.kind !== 'mods') return;
+                setIds([...preset.modIds]);
+                setManual('');
+                setFieldError('');
+                setSaveError('');
+                setLoadedFromGroup(true);
+              }}
+            />
+            {overridden && !loadedFromGroup && (
               <Alert severity="warning">
                 {t('手写配置里的 ActiveMods 会覆盖这份列表。如需使用这里的列表，请先移除手写项。')}
+              </Alert>
+            )}
+            {loadedFromGroup && presetModOverride && (
+              <Alert severity="info">
+                {t('保存地图时会采用此模组顺序，并移除手写的模组列表覆盖项。')}
               </Alert>
             )}
             {saveError && <Alert severity="error">{saveError}</Alert>}

@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import type { FormEvent } from 'react';
+import { Fragment, useCallback, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import {
   Alert,
   Box,
@@ -25,6 +25,7 @@ export default function FormDialog({
   onSubmit,
   submitLabel = '保存',
   description,
+  renderField,
 }: {
   title: string;
   fields: Fields;
@@ -33,6 +34,12 @@ export default function FormDialog({
   onSubmit: (values: FormValues) => Promise<unknown>;
   submitLabel?: string;
   description?: string;
+  renderField?: (
+    field: Field,
+    values: FormValues,
+    change: (changes: FormValues) => void,
+    busy: boolean,
+  ) => ReactNode;
 }) {
   const { t } = useTranslation();
   const [values, setValues] = useState(initial);
@@ -63,13 +70,23 @@ export default function FormDialog({
             {description && <Alert severity="info">{t(description)}</Alert>}
             {error && <Alert severity="error">{t(error)}</Alert>}
             {(typeof fields === 'function' ? fields(values) : fields).map((field) => (
-              <FormField
-                key={field.key}
-                field={field}
-                value={values[field.key]}
-                disabled={busy}
-                onChange={(value) => setValues((current) => ({ ...current, [field.key]: value }))}
-              />
+              <Fragment key={field.key}>
+                {renderField?.(
+                  field,
+                  values,
+                  (changes) => setValues((current) => ({ ...current, ...changes })),
+                  busy,
+                ) ?? (
+                  <FormField
+                    field={field}
+                    value={values[field.key]}
+                    disabled={busy}
+                    onChange={(value) =>
+                      setValues((current) => ({ ...current, [field.key]: value }))
+                    }
+                  />
+                )}
+              </Fragment>
             ))}
           </Stack>
         </DialogContent>

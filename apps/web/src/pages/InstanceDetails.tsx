@@ -37,6 +37,8 @@ import {
   iniEntries,
   INI_SECTIONS,
   usesServerFiles,
+  applyClusterPreset,
+  hasModListOverride,
 } from '@ark-control/common';
 import type { CommandKind, ConfigSaveSummary, Json } from '@ark-control/common';
 import { useUiStore, useWorkspaceStore } from '@/store';
@@ -615,6 +617,8 @@ export default function InstanceDetails() {
         <ModsDialog
           key={instance.id}
           initial={instance.config.modIds}
+          clusterId={instance.clusterId}
+          presetModOverride={hasModListOverride(instance.config)}
           overridden={configuredIni(instance.config, 'settings')
             .flatMap((text) => iniEntries('settings', text))
             .some(
@@ -624,13 +628,12 @@ export default function InstanceDetails() {
                 key.toLowerCase() === 'activemods',
             )}
           onClose={() => setMods(false)}
-          onSave={(modIds) =>
+          onSave={(modIds, loadedFromGroup) =>
             mutate(() =>
               request(`/instances/${instance.id}`, 'PATCH', {
-                config: {
-                  ...instance.config,
-                  modIds,
-                },
+                config: loadedFromGroup
+                  ? applyClusterPreset(instance.config, { kind: 'mods', modIds })
+                  : { ...instance.config, modIds },
               }),
             )
           }

@@ -1,15 +1,35 @@
 import {
   MAPS,
   GAME_BRANCHES,
+  applyClusterPreset,
+  effectiveGameConfig,
   estimateCapacity,
   gameConfigSchema,
   shareableServerFiles,
+  workshopMods,
 } from '@ark-control/common';
+import type { ClusterPresetContent } from '@ark-control/common';
 import { useWorkspaceStore } from '@/store';
 import { useWorkspaceCan } from '@/store/workspace-selection';
 import { request } from '@/api';
 import { FormDialog, useMutation } from '@/components';
 import type { Field, FormValues } from '@/components';
+import ClusterField from './ClusterField';
+import FormField from './FormField';
+import { useClusterPresets } from './use-cluster-presets';
+
+const defaults = gameConfigSchema.parse({});
+const defaultChoice = 'group-default';
+const systemChoice = 'system-default';
+
+function pickedPreset<T extends { id: string }>(
+  presets: T[],
+  choice: FormValues[string] | undefined,
+) {
+  return choice === systemChoice
+    ? undefined
+    : (presets.find((preset) => preset.id === choice) ?? presets[0]);
+}
 
 export default function NewInstanceDialog({
   onClose,
@@ -21,13 +41,48 @@ export default function NewInstanceDialog({
   initialFileSource?: string;
 }) {
   const data = useWorkspaceStore((state) => state.data);
+  const catalog = useClusterPresets();
   const can = useWorkspaceCan();
   const hosts =
     data?.hosts.filter((item) => can('maps.create', { kind: 'host', hostId: item.id })) ?? [];
   const mutate = useMutation();
   const count = data?.instances.length ?? 0;
+  const groupFor = (values: FormValues) =>
+    catalog.groups.find((group) => group.id === values.clusterId);
+  const templatesFor = (values: FormValues, kind: ClusterPresetContent['kind']) =>
+    groupFor(values)?.presets.filter((preset) => preset.kind === kind) ?? [];
+  const gamePresetFor = (values: FormValues) =>
+    pickedPreset(templatesFor(values, 'game'), values.gamePreset);
+  const configFor = (values: FormValues) => {
+    const base = {
+      ...defaults,
+      sessionName: String(values.name) || defaults.sessionName,
+      maxPlayers: Number(values.maxPlayers || 20),
+      pve: values.pve === true,
+    };
+    const game = gamePresetFor(values);
+    const mods = pickedPreset(templatesFor(values, 'mods'), values.modsPreset);
+    const withGame = game ? applyClusterPreset(base, game) : base;
+    return mods ? applyClusterPreset(withGame, mods) : withGame;
+  };
+  const presetField = (values: FormValues, kind: ClusterPresetContent['kind']): Field => {
+    const presets = templatesFor(values, kind);
+    return {
+      key: kind === 'game' ? 'gamePreset' : 'modsPreset',
+      label: kind === 'game' ? '组游戏配置' : '组模组配置',
+      kind: 'select',
+      options: presets.length
+        ? [
+            { value: defaultChoice, label: `${presets[0]!.name}（默认）` },
+            ...presets.slice(1).map(({ id, name }) => ({ value: id, label: name })),
+            { value: systemChoice, label: '使用系统默认' },
+          ]
+        : [{ value: defaultChoice, label: '使用系统默认' }],
+    };
+  };
   const fields = (values: FormValues): Field[] => {
     const host = data?.hosts.find((item) => item.id === values.hostId);
+    const configuration = configFor(values);
     const sources = (data?.serverFiles ?? []).filter(
       (file) =>
         file.hostId === values.hostId &&
@@ -40,7 +95,12 @@ export default function NewInstanceDialog({
         ),
     );
     const estimate = host
-      ? estimateCapacity(host, data?.instances ?? [], Number(values.maxPlayers || 20), 0)
+      ? estimateCapacity(
+          host,
+          data?.instances ?? [],
+          effectiveGameConfig(configuration).maxPlayers,
+          workshopMods(configuration).length,
+        )
       : null;
     const helper = !estimate
       ? '先选择主机。'
@@ -53,8 +113,11 @@ export default function NewInstanceDialog({
         kind: 'select',
         required: true,
         options: [...GAME_BRANCHES],
+        disabled: !!groupFor(values),
         helper: '跟随所选分支更新。玩家需在 Steam 选择相同分支；不同分支不会混用下载文件。',
       },
+      { key: 'clusterId', label: '互通组' },
+      ...(values.clusterId ? [presetField(values, 'game'), presetField(values, 'mods')] : []),
       {
         key: 'hostId',
         label: '主机',
@@ -109,11 +172,6 @@ export default function NewInstanceDialog({
         max: 65534,
         required: true,
       },
-      {
-        key: 'clusterId',
-        label: '互通组',
-        helper: '可留空；同组地图使用相同标识。跨主机互通需要共享目录。',
-      },
       { key: 'pve', label: 'PVE 模式', kind: 'switch' },
       { key: 'autoRestart', label: '自动拉起', kind: 'switch' },
       { key: 'autoBranchUpdate', label: '自动跟随分支更新（备份后维护重启）', kind: 'switch' },
@@ -133,11 +191,7 @@ export default function NewInstanceDialog({
         branch: values.branch,
         autoBranchUpdate: values.autoBranchUpdate,
         serverFileSource: values.serverFileSource,
-        config: gameConfigSchema.parse({
-          sessionName: values.name,
-          maxPlayers: Number(values.maxPlayers),
-          pve: values.pve,
-        }),
+        config: gameConfigSchema.parse(configFor(values)),
       }),
     );
   return (
@@ -160,11 +214,45 @@ export default function NewInstanceDialog({
         queryPort: String(27015 + count),
         rconPort: String(27020 + count),
         clusterId: '',
+        gamePreset: defaultChoice,
+        modsPreset: defaultChoice,
         pve: true,
         autoRestart: true,
       }}
       onClose={onClose}
       onSubmit={handleSubmit}
+      renderField={(field, values, change, busy) => {
+        if (field.key === 'clusterId')
+          return (
+            <ClusterField
+              {...catalog}
+              value={String(values.clusterId)}
+              disabled={busy}
+              onChange={(clusterId) => {
+                const selected = catalog.groups.find((group) => group.id === clusterId);
+                change({
+                  clusterId,
+                  gamePreset: defaultChoice,
+                  modsPreset: defaultChoice,
+                  ...(selected && selected.branch !== values.branch
+                    ? { branch: selected.branch, serverFileSource: 'auto' }
+                    : {}),
+                });
+              }}
+            />
+          );
+        if ((field.key === 'maxPlayers' || field.key === 'pve') && gamePresetFor(values)) {
+          const effective = effectiveGameConfig(configFor(values));
+          return (
+            <FormField
+              field={{ ...field, helper: '来自所选组游戏配置。' }}
+              value={field.key === 'maxPlayers' ? String(effective.maxPlayers) : effective.pve}
+              onChange={(value) => change({ [field.key]: value })}
+              disabled
+            />
+          );
+        }
+      }}
       submitLabel="创建地图"
     />
   );

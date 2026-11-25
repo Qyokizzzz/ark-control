@@ -4,6 +4,9 @@ import { CronExpressionParser } from 'cron-parser';
 import type {
   Admin,
   ClusterAdminSettings,
+  ClusterPreset,
+  ClusterPresetContent,
+  ClusterPresetGroup,
   Command,
   CommandInput,
   ConfigAuditEntry,
@@ -13,6 +16,7 @@ import type {
   Instance,
   InstanceUpdateResult,
   Json,
+  SaveClusterPresetInput,
   Schedule,
 } from '@ark-control/common';
 import {
@@ -22,8 +26,11 @@ import {
   SHARED_MAP_FILES_FEATURE,
   canDeleteStoppedInstance,
   canTerminateStartup,
+  applyClusterPreset,
+  clusterGameConfig,
   effectiveGameConfig,
   estimateCapacity,
+  gameConfigSchema,
   isHostOnline,
   validatePortAllocation,
   gameBranch,
@@ -40,6 +47,7 @@ import {
   encryptSecret,
   hashToken,
   newToken,
+  parse,
   tokensEqual,
 } from '@/infrastructure';
 import type { Connection } from '@/infrastructure';
@@ -432,7 +440,11 @@ export class ControlService {
         throw new BusinessError('NOT_FOUND', '请先添加主机。');
       await this.validateFileSource(input.serverFileSource, input.hostId, connection, input.branch);
       const members = await this.db.list('instances', connection);
-      if (input.clusterId && members.some((item) => item.clusterId === input.clusterId))
+      const presets = await this.presetsForCluster(input.clusterId, connection);
+      if (
+        input.clusterId &&
+        (presets.length || members.some((item) => item.clusterId === input.clusterId))
+      )
         requireAccess('maps.configure', { kind: 'cluster', clusterId: input.clusterId });
       if (
         input.clusterId &&
@@ -441,11 +453,12 @@ export class ControlService {
         requireAccess('clusters.admin-password', { kind: 'cluster', clusterId: input.clusterId });
       if (
         input.clusterId &&
-        members.some(
-          (item) =>
-            item.clusterId === input.clusterId &&
-            gameBranch(item.branch) !== gameBranch(input.branch),
-        )
+        (presets.some((item) => item.branch !== gameBranch(input.branch)) ||
+          members.some(
+            (item) =>
+              item.clusterId === input.clusterId &&
+              gameBranch(item.branch) !== gameBranch(input.branch),
+          ))
       )
         throw new BusinessError('BRANCH_CONFLICT', '同一互通组需要使用相同 Steam 分支。');
       const id = randomUUID();
@@ -486,6 +499,159 @@ export class ControlService {
       return instance;
     });
   }
+  private async presetsForCluster(clusterId: string, connection: Connection) {
+    if (!clusterId) return [];
+    const records = await this.db.listBy('cluster-presets', 'clusterId', clusterId, connection);
+    return records.filter((preset) => preset.clusterId === clusterId);
+  }
+
+  async clusterPresetGroups(): Promise<ClusterPresetGroup[]> {
+    const [maps, presets, passwords] = await Promise.all([
+      this.db.list('instances'),
+      this.db.list('cluster-presets'),
+      this.db.list('cluster-admin-passwords'),
+    ]);
+    const protectedGroups = new Set(passwords.map(({ id }) => id));
+    const groups = new Map<
+      string,
+      {
+        branch: ClusterPresetGroup['branch'];
+        maps: Instance[];
+        presets: ClusterPreset[];
+      }
+    >();
+    for (const map of maps) {
+      if (!map.clusterId) continue;
+      const group = groups.get(map.clusterId) ?? {
+        branch: gameBranch(map.branch),
+        maps: [],
+        presets: [],
+      };
+      group.maps.push(map);
+      groups.set(map.clusterId, group);
+    }
+    for (const preset of presets) {
+      const group = groups.get(preset.clusterId) ?? {
+        branch: preset.branch,
+        maps: [],
+        presets: [],
+      };
+      if (group.branch === preset.branch) group.presets.push(preset);
+      groups.set(preset.clusterId, group);
+    }
+    return [...groups]
+      .flatMap(([id, group]) => {
+        const target = { kind: 'cluster', clusterId: id } as const;
+        const canSave = allowed('maps.configure', target);
+        if (!canSave && !group.maps.some((map) => allowed('maps.configure', instanceTarget(map))))
+          return [];
+        return [
+          {
+            id,
+            branch: group.branch,
+            presets: group.presets.sort(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+            ),
+            mapCount: group.maps.length,
+            canJoin:
+              canSave && (!protectedGroups.has(id) || allowed('clusters.admin-password', target)),
+            canSave,
+          },
+        ];
+      })
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  async saveClusterPreset(clusterId: string, input: SaveClusterPresetInput, operator: Admin) {
+    requireAccess('maps.configure', { kind: 'cluster', clusterId });
+    if (input.updateMaps && !input.overwrite)
+      throw new BusinessError('INVALID_INPUT', '覆盖已有配置时可以选择更新组内地图。');
+    return this.db.transaction(async (connection) => {
+      const [maps, presets] = await Promise.all([
+        this.db.listBy('instances', 'clusterId', clusterId, connection),
+        this.presetsForCluster(clusterId, connection),
+      ]);
+      const members = maps.filter((map) => map.clusterId === clusterId);
+      const branch = members[0] ? gameBranch(members[0].branch) : presets[0]?.branch;
+      if (!branch) throw new BusinessError('NOT_FOUND', '当前工作空间没有这个互通组。', 404);
+      const previous = input.overwrite
+        ? presets.find(({ id }) => id === input.overwrite?.id)
+        : undefined;
+      if (
+        input.overwrite &&
+        (!previous ||
+          previous.kind !== input.kind ||
+          previous.branch !== branch ||
+          previous.revision !== input.overwrite.revision)
+      )
+        throw new BusinessError(
+          'PRESET_CHANGED',
+          '组配置已变化，请重新打开并选择要覆盖的配置。',
+          409,
+        );
+      if (
+        presets.some(
+          (preset) =>
+            preset.kind === input.kind &&
+            preset.id !== previous?.id &&
+            preset.name.toLowerCase() === input.name.toLowerCase(),
+        )
+      )
+        throw new BusinessError(
+          'PRESET_NAME_CONFLICT',
+          '这一类组配置已有同名项，请改名或选择覆盖。',
+          409,
+        );
+      const content: ClusterPresetContent =
+        input.kind === 'game'
+          ? { kind: 'game', config: clusterGameConfig(input.config) }
+          : { kind: 'mods', modIds: [...new Set(input.modIds)] };
+      const now = nowIso();
+      const preset: ClusterPreset = {
+        ...content,
+        id: previous?.id ?? randomUUID(),
+        clusterId,
+        branch,
+        name: input.name,
+        revision: randomUUID(),
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+      };
+      await this.db.put('cluster-presets', preset, connection);
+      let updatedMaps = 0;
+      if (input.updateMaps) {
+        for (const before of members) {
+          if (gameBranch(before.branch) !== branch)
+            throw new BusinessError('BRANCH_CONFLICT', '同一互通组需要使用相同 Steam 分支。');
+          const updated = {
+            ...before,
+            config: parse(gameConfigSchema, applyClusterPreset(before.config, content)),
+          };
+          const saved = await this.recordConfigChange(
+            before,
+            updated,
+            operator,
+            connection,
+            '应用互通组配置',
+          );
+          if (saved.total) {
+            // The next launch reads the saved values. Group updates do not enqueue a sync or restart.
+            await this.db.put('instances', updated, connection);
+            updatedMaps++;
+          }
+        }
+      }
+      await this.audit(
+        previous ? '覆盖互通组配置' : '新建互通组配置',
+        clusterId,
+        `${input.kind === 'game' ? '游戏配置' : '模组'} · ${preset.name}${input.updateMaps ? `，${updatedMaps} 张地图下次启动时应用。` : ''}`,
+        connection,
+      );
+      return { preset, updatedMaps };
+    });
+  }
+
   async clusterAdminSettings(): Promise<ClusterAdminSettings[]> {
     const [instances, groups, credentials, hosts] = await Promise.all([
       this.db.list('instances'),
@@ -592,13 +758,19 @@ export class ControlService {
       const current = await this.requireInstance(id, connection);
       requireAccess('maps.configure', instanceTarget(current));
       const clusterChanged = input.clusterId !== undefined && input.clusterId !== current.clusterId;
+      const targetCluster = input.clusterId ?? current.clusterId;
+      const presets =
+        input.clusterId !== undefined || input.branch
+          ? await this.presetsForCluster(targetCluster, connection)
+          : [];
       if (clusterChanged) {
         for (const clusterId of new Set([current.clusterId, input.clusterId])) {
           if (
             clusterId &&
-            (await this.db.listBy('instances', 'clusterId', clusterId, connection)).some(
-              (peer) => peer.id !== id,
-            )
+            ((clusterId === targetCluster && presets.length > 0) ||
+              (await this.db.listBy('instances', 'clusterId', clusterId, connection)).some(
+                (peer) => peer.id !== id,
+              ))
           )
             requireAccess('maps.configure', { kind: 'cluster', clusterId });
         }
@@ -618,13 +790,14 @@ export class ControlService {
           '已安装地图更换分支需要新建实例并按对应版本恢复备份，不能直接覆盖现有存档。',
         );
       if (
-        (input.clusterId ?? current.clusterId) &&
-        (await this.db.list('instances', connection)).some(
-          (item) =>
-            item.id !== id &&
-            item.clusterId === (input.clusterId ?? current.clusterId) &&
-            gameBranch(item.branch) !== gameBranch(input.branch ?? current.branch),
-        )
+        targetCluster &&
+        (presets.some((item) => item.branch !== gameBranch(input.branch ?? current.branch)) ||
+          (await this.db.list('instances', connection)).some(
+            (item) =>
+              item.id !== id &&
+              item.clusterId === targetCluster &&
+              gameBranch(item.branch) !== gameBranch(input.branch ?? current.branch),
+          ))
       )
         throw new BusinessError('BRANCH_CONFLICT', '同一互通组需要使用相同 Steam 分支。');
       if (
@@ -702,35 +875,44 @@ export class ControlService {
         }
       }
       await this.db.put('instances', updated, connection);
-      const changes = configurationChanges(current, updated);
-      const auditId = changes.length ? randomUUID() : null;
-      if (auditId) {
-        await this.db.put(
-          'audit',
-          {
-            id: auditId,
-            actor: `${operator.name} (${operator.email})`,
-            actorId: operator.id,
-            action: '修改地图配置',
-            target: updated.name,
-            instanceId: id,
-            detail: `已保存 ${changes.length} 项配置修改。`,
-            changeCount: changes.length,
-            createdAt: nowIso(),
-          },
-          connection,
-        );
-        await this.db.put('config-audit-details', { id: auditId, changes }, connection);
-      }
       return {
         ...updated,
-        configSave: {
-          auditId,
-          total: changes.length,
-          changes: changes.slice(0, CONFIG_CHANGE_PREVIEW_LIMIT),
-        },
+        configSave: await this.recordConfigChange(current, updated, operator, connection),
       };
     });
+  }
+  private async recordConfigChange(
+    before: Instance,
+    after: Instance,
+    operator: Admin,
+    connection: Connection,
+    action = '修改地图配置',
+  ) {
+    const changes = configurationChanges(before, after);
+    const auditId = changes.length ? randomUUID() : null;
+    if (auditId) {
+      await this.db.put(
+        'audit',
+        {
+          id: auditId,
+          actor: `${operator.name} (${operator.email})`,
+          actorId: operator.id,
+          action,
+          target: after.name,
+          instanceId: after.id,
+          detail: `已保存 ${changes.length} 项配置修改。`,
+          changeCount: changes.length,
+          createdAt: nowIso(),
+        },
+        connection,
+      );
+      await this.db.put('config-audit-details', { id: auditId, changes }, connection);
+    }
+    return {
+      auditId,
+      total: changes.length,
+      changes: changes.slice(0, CONFIG_CHANGE_PREVIEW_LIMIT),
+    };
   }
   async enqueue(
     instanceId: string,

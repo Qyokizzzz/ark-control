@@ -39,6 +39,7 @@ import type {
   Workspace,
   WorkspaceGrant,
   PluginPackage,
+  ClusterPreset,
 } from '@ark-control/common';
 import { config } from '@/infrastructure/config';
 import { BusinessError } from '@/infrastructure/errors';
@@ -146,6 +147,7 @@ export interface RecordMap {
   schedules: Schedule;
   audit: AuditEntry;
   'config-audit-details': { id: string; changes: ConfigChange[] };
+  'cluster-presets': ClusterPreset;
   console: ConsoleEntry;
   'host-credentials': PrivateHost;
   'instance-credentials': PrivateInstance;

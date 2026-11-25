@@ -32,10 +32,25 @@ export const gameConfigSchema = z
     const message = gameIniIssue(config);
     if (message) context.addIssue({ code: 'custom', message });
   });
+const clusterPresetFields = {
+  name,
+  overwrite: z.object({ id: z.uuid(), revision: z.uuid() }).optional(),
+  updateMaps: z.boolean().default(false),
+};
+export const saveClusterPresetSchema = z.discriminatedUnion('kind', [
+  z.object({ ...clusterPresetFields, kind: z.literal('game'), config: gameConfigSchema }),
+  z.object({
+    ...clusterPresetFields,
+    kind: z.literal('mods'),
+    modIds: gameConfigSchema.shape.modIds,
+  }),
+]);
+export type SaveClusterPresetInput = z.infer<typeof saveClusterPresetSchema>;
 export const createHostSchema = z.object({ name, address: z.string().trim().max(200).default('') });
 export const gameAdminPasswordSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{1,128}$/, '游戏管理员密码需为 1–128 位字母、数字、短横线或下划线。');
+export const clusterIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{0,48}$/);
 export const createInstanceSchema = z.object({
   branch: z.enum(['public', 'preaquatica']).default('public'),
   autoBranchUpdate: z.boolean().default(true),
@@ -45,10 +60,7 @@ export const createInstanceSchema = z.object({
   hostId: z.string().uuid(),
   name,
   map: z.enum(MAPS.map((item) => item.value)),
-  clusterId: z
-    .string()
-    .regex(/^[a-zA-Z0-9_-]{0,48}$/)
-    .default(''),
+  clusterId: clusterIdSchema.default(''),
   gamePort: port.default(7777),
   queryPort: port.default(27015),
   rconPort: port.default(27020),

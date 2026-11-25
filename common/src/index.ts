@@ -4,6 +4,7 @@ export * from './schemas/index';
 export * from './domain/index';
 export * from './domain/server-files';
 export * from './game-config/index';
+export * from './cluster-presets/index';
 export * from './connections/index';
 export * from './management/index';
 export * from './workspaces/index';

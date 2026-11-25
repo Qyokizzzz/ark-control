@@ -7,6 +7,7 @@ import {
   CONFIG_SYNC_FEATURE,
   GAME_BRANCHES,
   INI_FILES,
+  applyClusterPreset,
   shareableServerFiles,
 } from '@ark-control/common';
 import type {
@@ -36,6 +37,7 @@ import {
 } from '@/game-config';
 import type { DraftEntry } from '@/game-config';
 import AdvancedIniFields, { IniOverride } from './AdvancedIniFields';
+import ClusterPresetActions from './ClusterPresetActions';
 import FormField from './FormField';
 import Surface from './Surface';
 import { formatDate, useMutation } from './common';
@@ -227,6 +229,35 @@ export default function InstanceConfigPanel({
           spacing={2.5}
           sx={sectionSpacing}
         >
+          <ClusterPresetActions
+            clusterId={instance.clusterId}
+            disabled={blocked}
+            getDraft={(mode) => ({
+              kind: 'game',
+              config: (mode === 'save' ? saveGameForm : draftConfig)(
+                instance.config,
+                draft.basic,
+                draft.advanced,
+                draft.manual,
+              ),
+            })}
+            onError={setError}
+            onLoad={(preset) => {
+              if (preset.kind !== 'game') return;
+              setDraft((current) => {
+                const config = draftConfig(
+                  instance.config,
+                  current.basic,
+                  current.advanced,
+                  current.manual,
+                );
+                const next = readGameForm(applyClusterPreset(config, preset));
+                return { ...next, basic: { ...current.basic, ...next.basic } };
+              });
+              setDirty(true);
+              setError(null);
+            }}
+          />
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             gap={1}

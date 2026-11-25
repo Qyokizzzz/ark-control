@@ -11,10 +11,12 @@ import {
   Req,
 } from '@nestjs/common';
 import {
+  clusterIdSchema,
   commandSchema,
   createHostSchema,
   createInstanceSchema,
   gameAdminPasswordSchema,
+  saveClusterPresetSchema,
   scheduleSchema,
   updateInstanceSchema,
 } from '@ark-control/common';
@@ -69,6 +71,20 @@ export class ControlController {
   }
   @Get('clusters/admin-passwords') clusterAdminSettings() {
     return this.control.clusterAdminSettings();
+  }
+  @Get('clusters/presets') clusterPresets() {
+    return this.control.clusterPresetGroups();
+  }
+  @Post('clusters/:id/presets') saveClusterPreset(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AdminRequest,
+  ) {
+    return this.control.saveClusterPreset(
+      parse(clusterIdSchema.min(1), id),
+      parse(saveClusterPresetSchema, body),
+      request.admin,
+    );
   }
   @Patch('clusters/:id/admin-password') configureClusterAdmin(
     @Param('id') id: string,
