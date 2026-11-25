@@ -1,4 +1,4 @@
-import { iniAddress } from '@ark-control/common';
+import { gameConfigSchema, iniAddress } from '@ark-control/common';
 import type { IniFile } from '@ark-control/common';
 
 export type IniKind = 'number' | 'integer' | 'text' | 'password' | 'switch' | 'list';
@@ -53,7 +53,7 @@ export const advancedGroups = [
         [
           'BabyMatureSpeedMultiplier',
           '恐龙成长速度倍率',
-          1,
+          gameConfigSchema.shape.babyMature.parse(undefined),
           'number',
           '10 倍时，幼崽成长耗时约为原来的十分之一。',
         ],

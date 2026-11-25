@@ -1,8 +1,20 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router';
-import { Alert, Box, Button, Divider, Stack, Typography } from '@mui/material';
-import { FloppyDiskIcon } from '@phosphor-icons/react';
+import {
+  Alert,
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
+  Stack,
+  Typography,
+} from '@mui/material';
+import { ArrowCounterClockwiseIcon, FloppyDiskIcon } from '@phosphor-icons/react';
 import {
   CONFIG_SYNC_FEATURE,
   GAME_BRANCHES,
@@ -33,9 +45,10 @@ import {
   manualOverrides,
   optionId,
   readGameForm,
+  resetGameForm,
   saveGameForm,
 } from '@/game-config';
-import type { DraftEntry } from '@/game-config';
+import type { DraftEntry, GameFormResetScope } from '@/game-config';
 import AdvancedIniFields, { IniOverride } from './AdvancedIniFields';
 import ClusterPresetActions from './ClusterPresetActions';
 import FormField from './FormField';
@@ -66,6 +79,26 @@ const manualFields: { file: IniFile; field: Field }[] = [
     },
   },
 ];
+
+const resetOptions = {
+  all: {
+    title: '重置全部游戏配置',
+    message: '恢复基础和高级游戏设置的默认值，清空进服密码、模组列表及手写 INI。',
+  },
+  basic: {
+    title: '重置基础配置',
+    message:
+      '恢复基础游戏设置的默认值，包括 Steam 服名、入服密码、模组列表和常用倍率。手写覆盖仍优先。',
+  },
+  advanced: {
+    title: '重置高级配置',
+    message: '恢复高级设置的默认值，清空自定义表单项。手写覆盖仍优先。',
+  },
+  manual: {
+    title: '重置手写配置',
+    message: '清空两段手写 INI。原本被覆盖的项目将使用表单值或默认值。',
+  },
+} satisfies Record<GameFormResetScope, { title: string; message: string }>;
 
 export default function InstanceConfigPanel({
   instance,
@@ -104,6 +137,7 @@ export default function InstanceConfigPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [resetScope, setResetScope] = useState<GameFormResetScope | null>(null);
   const [lastSave, setLastSave] = useState<{
     previousId?: string;
     requestedId?: string;
@@ -180,6 +214,25 @@ export default function InstanceConfigPanel({
     setDirty(true);
     setDraft((current) => ({ ...current, manual: { ...current.manual, [file]: value } }));
   }, []);
+  const handleReset = () => {
+    if (!resetScope || blocked) return;
+    setDraft((current) => resetGameForm(current, resetScope));
+    setDirty(true);
+    setError(null);
+    setResetScope(null);
+  };
+  const sectionReset = (scope: Exclude<GameFormResetScope, 'all'>) => (
+    <Button
+      type="button"
+      size="small"
+      color="inherit"
+      disabled={blocked}
+      aria-label={t(resetOptions[scope].title)}
+      onClick={() => setResetScope(scope)}
+    >
+      {t('重置')}
+    </Button>
+  );
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
       event.preventDefault();
@@ -265,9 +318,12 @@ export default function InstanceConfigPanel({
             alignItems={{ sm: 'center' }}
           >
             <Box>
-              <Typography variant="h4" component="h2" id="basic-config-title">
-                {t('基础配置')}
-              </Typography>
+              <Stack direction="row" alignItems="center" gap={1}>
+                <Typography variant="h4" component="h2" id="basic-config-title">
+                  {t('基础配置')}
+                </Typography>
+                {sectionReset('basic')}
+              </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {t('设置 Steam 服名、人数和常用倍率。保存后，下次启动地图时应用。')}
               </Typography>
@@ -322,9 +378,12 @@ export default function InstanceConfigPanel({
           sx={sectionSpacing}
         >
           <Box>
-            <Typography variant="h4" component="h2" id="advanced-config-title" tabIndex={-1}>
-              {t('高级配置')}
-            </Typography>
+            <Stack direction="row" alignItems="center" gap={1}>
+              <Typography variant="h4" component="h2" id="advanced-config-title" tabIndex={-1}>
+                {t('高级配置')}
+              </Typography>
+              {sectionReset('advanced')}
+            </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {t('按玩法展开配置，或直接搜索。未修改的高级项继续使用游戏默认值。')}
             </Typography>
@@ -348,9 +407,12 @@ export default function InstanceConfigPanel({
           sx={sectionSpacing}
         >
           <Box>
-            <Typography variant="h4" component="h2" id="manual-config-title" tabIndex={-1}>
-              {t('手写配置')}
-            </Typography>
+            <Stack direction="row" alignItems="center" gap={1}>
+              <Typography variant="h4" component="h2" id="manual-config-title" tabIndex={-1}>
+                {t('手写配置')}
+              </Typography>
+              {sectionReset('manual')}
+            </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {t('同一文件、同一 INI 节里的同名键，以手写值为准。移除手写项即可恢复表单值。')}
             </Typography>
@@ -401,18 +463,53 @@ export default function InstanceConfigPanel({
                 {saveSummary && <SavePreview summary={saveSummary} />}
               </Stack>
             )}
-            <Button
-              type="submit"
-              variant="contained"
-              startIcon={<FloppyDiskIcon size={18} />}
-              disabled={blocked}
-              sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-            >
-              {t(busy ? '正在保存…' : '保存配置')}
-            </Button>
+            <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ flexShrink: 0 }}>
+              <Button
+                type="button"
+                variant="outlined"
+                color="inherit"
+                startIcon={<ArrowCounterClockwiseIcon size={18} />}
+                disabled={blocked}
+                sx={{ whiteSpace: 'nowrap' }}
+                onClick={() => setResetScope('all')}
+              >
+                {t('重置为默认')}
+              </Button>
+              <Button
+                type="submit"
+                variant="contained"
+                startIcon={<FloppyDiskIcon size={18} />}
+                disabled={blocked}
+                sx={{ whiteSpace: 'nowrap' }}
+              >
+                {t(busy ? '正在保存…' : '保存配置')}
+              </Button>
+            </Stack>
           </Stack>
         </Surface>
       </Stack>
+      {resetScope && (
+        <Dialog
+          open
+          onClose={() => setResetScope(null)}
+          aria-describedby="game-config-reset-description"
+        >
+          <DialogTitle>{t(resetOptions[resetScope].title)}</DialogTitle>
+          <DialogContent>
+            <DialogContentText id="game-config-reset-description">
+              {t(resetOptions[resetScope].message)} {t('点击「保存配置」后提交。')}
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button type="button" onClick={() => setResetScope(null)}>
+              {t('取消')}
+            </Button>
+            <Button type="button" variant="contained" onClick={handleReset} disabled={blocked}>
+              {t('确认重置')}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 }

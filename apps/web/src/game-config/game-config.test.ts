@@ -6,6 +6,7 @@ import {
   manualOverrides,
   optionId,
   readGameForm,
+  resetGameForm,
   saveGameForm,
   validCustomKey,
 } from './index';
@@ -32,6 +33,47 @@ describe('the instance INI form', () => {
     const next = saveGameForm(current, draft.basic, draft.advanced, draft.manual);
     expect(next.advancedIni).toEqual({ settings: '', game: '' });
     expect(next.babyMature).toBe(current.babyMature);
+  });
+
+  it('resets only the requested form section and can reset the entire game configuration', () => {
+    const defaults = gameConfigSchema.parse({});
+    const config = gameConfigSchema.parse({
+      harvest: 25,
+      babyMature: 12,
+      sessionName: 'Custom session',
+      serverPassword: 'sample',
+      modIds: ['123'],
+      advancedIni: { settings: '', game: 'LimitTurretsNum=180' },
+      extraSettingsIni: 'HarvestAmountMultiplier=50',
+      extraGameIni: 'BabyMatureSpeedMultiplier=20',
+    });
+    const draft = readGameForm(config);
+    draft.basic.name = 'Map name';
+    draft.basic.branch = 'preaquatica';
+    const save = ({ basic, advanced, manual }: typeof draft) =>
+      saveGameForm(config, basic, advanced, manual);
+
+    const basic = resetGameForm(draft, 'basic');
+    expect(save(basic)).toMatchObject({ harvest: defaults.harvest, babyMature: 12 });
+    expect(basic.advanced).toEqual(draft.advanced);
+    expect(basic.manual).toEqual(draft.manual);
+    expect(effectiveGameConfig(save(basic)).harvest).toBe(50);
+
+    const advanced = resetGameForm(draft, 'advanced');
+    expect(save(advanced)).toMatchObject({ harvest: 25, babyMature: defaults.babyMature });
+    expect(advanced.advanced.size).toBe(0);
+    expect(advanced.manual).toEqual(draft.manual);
+    expect(effectiveGameConfig(save(advanced)).babyMature).toBe(20);
+
+    const manual = resetGameForm(draft, 'manual');
+    expect(manual.basic).toEqual(draft.basic);
+    expect(manual.advanced).toEqual(draft.advanced);
+    expect(manual.manual).toEqual({ game: '', settings: '' });
+    expect(effectiveGameConfig(save(manual))).toMatchObject({ harvest: 25, babyMature: 12 });
+
+    const all = resetGameForm(draft, 'all');
+    expect(save(all)).toEqual({ ...defaults, advancedIni: { game: '', settings: '' } });
+    expect(all.basic).toMatchObject({ name: 'Map name', branch: 'preaquatica' });
   });
 
   it('preserves old raw INI and lets manual overrides take precedence without losing the form value', () => {

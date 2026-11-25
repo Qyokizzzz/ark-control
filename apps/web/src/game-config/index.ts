@@ -182,6 +182,27 @@ export function readGameForm(config: GameConfig) {
   };
 }
 
+export type GameFormResetScope = 'all' | 'basic' | 'advanced' | 'manual';
+
+export function resetGameForm(
+  current: ReturnType<typeof readGameForm>,
+  scope: GameFormResetScope,
+): ReturnType<typeof readGameForm> {
+  const defaults = readGameForm(gameConfigSchema.parse({}));
+  const { babyMature, ...basicDefaults } = defaults.basic;
+  const resetBasic = scope === 'all' || scope === 'basic';
+  const resetAdvanced = scope === 'all' || scope === 'advanced';
+  return {
+    basic: {
+      ...current.basic,
+      ...(resetBasic && basicDefaults),
+      ...(resetAdvanced && { babyMature: babyMature! }),
+    },
+    advanced: resetAdvanced ? defaults.advanced : current.advanced,
+    manual: scope === 'all' || scope === 'manual' ? defaults.manual : current.manual,
+  };
+}
+
 export function manualOverrides(manual: ManualIni) {
   return readEntries((file) => manual[file]);
 }

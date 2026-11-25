@@ -280,6 +280,22 @@ const en: Record<string, string> = {
   手写配置: 'Manual INI',
   常用高级: 'Common advanced settings',
   保存配置: 'Save settings',
+  重置: 'Reset',
+  重置为默认: 'Reset to defaults',
+  确认重置: 'Confirm reset',
+  重置全部游戏配置: 'Reset all game settings',
+  重置基础配置: 'Reset basic settings',
+  重置高级配置: 'Reset advanced settings',
+  重置手写配置: 'Reset manual INI',
+  '恢复基础和高级游戏设置的默认值，清空进服密码、模组列表及手写 INI。':
+    'Restore the default basic and advanced settings and clear the join password, mod list, and manual INI entries.',
+  '恢复基础游戏设置的默认值，包括 Steam 服名、入服密码、模组列表和常用倍率。手写覆盖仍优先。':
+    'Restore the default Steam server name, join password, mod list, and common rates. Manual INI overrides still take precedence.',
+  '恢复高级设置的默认值，清空自定义表单项。手写覆盖仍优先。':
+    'Restore the default advanced settings and remove custom fields. Manual INI overrides still take precedence.',
+  '清空两段手写 INI。原本被覆盖的项目将使用表单值或默认值。':
+    'Clear both manual INI fields. Previously overridden settings will use their form values or defaults.',
+  '点击「保存配置」后提交。': 'Select Save settings to apply the reset.',
   '正在保存…': 'Saving…',
   游戏配置已保存到后台: 'Game settings saved to the control panel',
   同步游戏配置: 'Sync game settings',
