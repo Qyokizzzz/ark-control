@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   clusterIdSchema,
+  clusterSettingsSchema,
   commandSchema,
   createHostSchema,
   createInstanceSchema,
@@ -85,6 +86,10 @@ export class ControlController {
       parse(saveClusterPresetSchema, body),
       request.admin,
     );
+  }
+  @Patch('clusters/:id/settings') configureCluster(@Param('id') id: string, @Body() body: unknown) {
+    const { serverNamePrefix } = parse(clusterSettingsSchema, body);
+    return this.control.configureCluster(parse(clusterIdSchema.min(1), id), serverNamePrefix);
   }
   @Patch('clusters/:id/admin-password') configureClusterAdmin(
     @Param('id') id: string,

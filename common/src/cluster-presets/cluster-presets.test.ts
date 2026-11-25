@@ -1,9 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import { effectiveGameConfig, workshopMods } from '@common/game-config';
-import { gameConfigSchema } from '@common/schemas';
-import { applyClusterPreset, clusterGameConfig, hasModListOverride } from './index';
+import { clusterSettingsSchema, createInstanceSchema, gameConfigSchema } from '@common/schemas';
+import {
+  applyClusterPreset,
+  clusterGameConfig,
+  defaultSteamServerName,
+  hasModListOverride,
+} from './index';
 
 describe('cluster configuration presets', () => {
+  it('accepts a public prefix with slashes and keeps omitted map names available for defaulting', () => {
+    const { serverNamePrefix } = clusterSettingsSchema.parse({
+      serverNamePrefix: ' 爽服/50采集/搜666 ',
+    });
+    expect(defaultSteamServerName('仙境', serverNamePrefix)).toBe('爽服/50采集/搜666-仙境');
+    expect(defaultSteamServerName('仙境')).toBe('仙境');
+    expect(clusterSettingsSchema.safeParse({ serverNamePrefix: '第一行\n第二行' }).success).toBe(
+      false,
+    );
+
+    const payload = { hostId: '00000000-0000-4000-8000-000000000001', map: 'Ragnarok' };
+    const automatic = createInstanceSchema.parse(payload);
+    expect(automatic.name).toBeUndefined();
+    expect(automatic.config.sessionName).toBeUndefined();
+    expect(automatic.config.harvest).toBe(gameConfigSchema.parse({}).harvest);
+    expect(
+      createInstanceSchema.parse({
+        ...payload,
+        name: 'PVP-01',
+        config: { sessionName: '自定义/服名' },
+      }),
+    ).toMatchObject({
+      name: 'PVP-01',
+      config: { sessionName: '自定义/服名' },
+    });
+  });
+
   it('copies gameplay while keeping the destination name, passwords and mods private', () => {
     const source = gameConfigSchema.parse({
       sessionName: 'source',

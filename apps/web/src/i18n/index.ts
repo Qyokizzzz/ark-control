@@ -327,6 +327,38 @@ const en: Record<string, string> = {
   '配置修改记录加载失败。': 'Could not load the configuration change record.',
   'Steam 服务器名称': 'Steam server name',
   后台地图名称: 'Control panel map name',
+  '将{{field}}重置为默认值': 'Reset {{field}} to default',
+  常规: 'General',
+  默认服名: 'Default server name',
+  公共前缀: 'Server name prefix',
+  保存前缀: 'Save prefix',
+  '公共前缀已保存。': 'Server name prefix saved.',
+  '新建地图时，用公共前缀和后台地图名称生成 Steam 服名。':
+    'New maps use the prefix and the control panel map name to generate the Steam server name.',
+  '默认使用组公共前缀和后台地图名称，可单独修改。':
+    'Defaults to the group prefix and control panel map name. You can change it here.',
+  '默认 Steam 服名超过 80 个字符，请填写较短的服名。':
+    'The default Steam server name exceeds 80 characters. Enter a shorter name.',
+  服名预览: 'Server name preview',
+  游戏配置预设: 'Game setting presets',
+  模组预设: 'Mod presets',
+  新建预设: 'New preset',
+  '组预设可在新建地图时选用。覆盖已有预设时，可以选择同步到组内地图。':
+    'Choose group presets when creating maps. When replacing a preset, you can apply it to maps in the group.',
+  建图默认: 'Default for new maps',
+  '编辑预设 {{name}}': 'Edit preset {{name}}',
+  返回预设列表: 'Back to presets',
+  保存预设: 'Save preset',
+  '设置玩家上限、PvE 模式和常用倍率。': 'Set the player limit, PvE mode, and common rates.',
+  '「{{key}}」请在对应的地图或模组页面设置。':
+    'Set {{key}} in the corresponding map or mod settings.',
+  '恢复基础和高级游戏设置的默认值，并清空手写 INI。':
+    'Restore basic and advanced game settings and clear manual INI entries.',
+  '恢复基础游戏设置的默认值。手写覆盖仍优先。':
+    'Restore basic game settings. Manual INI overrides still take precedence.',
+  '点击「保存预设」后提交。': 'Select Save preset to apply the reset.',
+  张地图: 'maps',
+  '此互通组暂无地图。': 'This cluster has no maps yet.',
   经验倍率: 'XP multiplier',
   采集倍率: 'Harvest multiplier',
   驯服倍率: 'Taming multiplier',

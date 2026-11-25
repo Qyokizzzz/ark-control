@@ -450,7 +450,7 @@ function PluginInstallation({
   );
 }
 
-function PluginWorkspace() {
+function PluginWorkspace({ scopeId }: { scopeId?: string }) {
   const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<ServerPluginsView | null>(null);
@@ -476,25 +476,28 @@ function PluginWorkspace() {
       clearInterval(timer);
     };
   }, [refresh]);
-  const chosen = params.get('scopeId');
-  const scope = data?.scopes.find((item) => item.id === chosen) ?? data?.scopes[0];
+  const chosen = scopeId ?? params.get('scopeId');
+  const scope =
+    data?.scopes.find((item) => item.id === chosen) ?? (scopeId ? undefined : data?.scopes[0]);
   return (
     <>
-      <PageHeading
-        title="服务端插件"
-        description="为 Windows ASE 地图安装插件，查看每张地图的安装和加载状态。"
-        action={
-          <Button
-            component={Link}
-            to="/instances"
-            variant="outlined"
-            color="inherit"
-            startIcon={<ArrowLeftIcon size={18} />}
-          >
-            {t('返回地图管理')}
-          </Button>
-        }
-      />
+      {!scopeId && (
+        <PageHeading
+          title="服务端插件"
+          description="为 Windows ASE 地图安装插件，查看每张地图的安装和加载状态。"
+          action={
+            <Button
+              component={Link}
+              to="/instances"
+              variant="outlined"
+              color="inherit"
+              startIcon={<ArrowLeftIcon size={18} />}
+            >
+              {t('返回地图管理')}
+            </Button>
+          }
+        />
+      )}
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
@@ -504,19 +507,21 @@ function PluginWorkspace() {
       {data &&
         (scope ? (
           <Stack gap={2}>
-            <TextField
-              select
-              label={t('互通组 / 独立服')}
-              value={scope.id}
-              onChange={(event) => setParams({ scopeId: event.target.value })}
-              sx={{ width: { xs: '100%', sm: 360 } }}
-            >
-              {data.scopes.map(({ id, name }) => (
-                <MenuItem key={id} value={id}>
-                  {name}
-                </MenuItem>
-              ))}
-            </TextField>
+            {!scopeId && (
+              <TextField
+                select
+                label={t('互通组 / 独立服')}
+                value={scope.id}
+                onChange={(event) => setParams({ scopeId: event.target.value })}
+                sx={{ width: { xs: '100%', sm: 360 } }}
+              >
+                {data.scopes.map(({ id, name }) => (
+                  <MenuItem key={id} value={id}>
+                    {name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
             <PluginInstallation
               key={`${scope.id}:${scope.mode}`}
               data={data}
@@ -534,6 +539,10 @@ function PluginWorkspace() {
         ))}
     </>
   );
+}
+
+export function ClusterPlugins({ clusterId }: { clusterId: string }) {
+  return <PluginWorkspace key={clusterId} scopeId={`cluster:${clusterId}`} />;
 }
 
 export default function ServerPlugins() {

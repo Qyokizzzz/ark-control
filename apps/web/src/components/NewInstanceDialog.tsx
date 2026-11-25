@@ -1,7 +1,9 @@
 import {
   MAPS,
   GAME_BRANCHES,
+  STEAM_SERVER_NAME_LIMIT,
   applyClusterPreset,
+  defaultSteamServerName,
   effectiveGameConfig,
   estimateCapacity,
   gameConfigSchema,
@@ -49,6 +51,14 @@ export default function NewInstanceDialog({
   const count = data?.instances.length ?? 0;
   const groupFor = (values: FormValues) =>
     catalog.groups.find((group) => group.id === values.clusterId);
+  const mapNameFor = (values: FormValues) =>
+    values.customMapName === true
+      ? String(values.name)
+      : (MAPS.find((map) => map.value === values.map)?.label ?? String(values.map));
+  const steamNameFor = (values: FormValues) =>
+    values.customSteamName === true
+      ? String(values.sessionName)
+      : defaultSteamServerName(mapNameFor(values), groupFor(values)?.serverNamePrefix);
   const templatesFor = (values: FormValues, kind: ClusterPresetContent['kind']) =>
     groupFor(values)?.presets.filter((preset) => preset.kind === kind) ?? [];
   const gamePresetFor = (values: FormValues) =>
@@ -56,7 +66,7 @@ export default function NewInstanceDialog({
   const configFor = (values: FormValues) => {
     const base = {
       ...defaults,
-      sessionName: String(values.name) || defaults.sessionName,
+      sessionName: steamNameFor(values),
       maxPlayers: Number(values.maxPlayers || 20),
       pve: values.pve === true,
     };
@@ -106,7 +116,13 @@ export default function NewInstanceDialog({
       ? '先选择主机。'
       : `启动资源${{ sufficient: '预计充足', tight: '接近上限', insufficient: '不足', unknown: '等待主机采样' }[estimate.verdict]}。地图内存预算约 ${(estimate.estimatedMemoryMb / 1024).toFixed(1)} GB。${estimate.blockingReasons.join(' ')}`;
     return [
-      { key: 'name', label: '名称', required: true },
+      {
+        key: 'map',
+        label: '地图',
+        kind: 'select',
+        required: true,
+        options: MAPS.map((item) => ({ value: item.value, label: item.label })),
+      },
       {
         key: 'branch',
         label: 'Steam 版本分支',
@@ -117,6 +133,17 @@ export default function NewInstanceDialog({
         helper: '跟随所选分支更新。玩家需在 Steam 选择相同分支；不同分支不会混用下载文件。',
       },
       { key: 'clusterId', label: '互通组' },
+      { key: 'name', label: '后台地图名称', required: true, maxLength: 80 },
+      {
+        key: 'sessionName',
+        label: 'Steam 服务器名称',
+        required: true,
+        maxLength: STEAM_SERVER_NAME_LIMIT,
+        helper:
+          steamNameFor(values).trim().length > STEAM_SERVER_NAME_LIMIT
+            ? '默认 Steam 服名超过 80 个字符，请填写较短的服名。'
+            : '默认使用组公共前缀和后台地图名称，可单独修改。',
+      },
       ...(values.clusterId ? [presetField(values, 'game'), presetField(values, 'mods')] : []),
       {
         key: 'hostId',
@@ -128,13 +155,6 @@ export default function NewInstanceDialog({
           label: `${item.name} · ${item.status === 'online' ? '在线' : '待连接'}`,
         })),
         helper,
-      },
-      {
-        key: 'map',
-        label: '地图',
-        kind: 'select',
-        required: true,
-        options: MAPS.map((item) => ({ value: item.value, label: item.label })),
       },
       {
         key: 'serverFileSource',
@@ -177,10 +197,14 @@ export default function NewInstanceDialog({
       { key: 'autoBranchUpdate', label: '自动跟随分支更新（备份后维护重启）', kind: 'switch' },
     ];
   };
-  const handleSubmit = (values: FormValues) =>
-    mutate(() =>
+  const handleSubmit = (values: FormValues) => {
+    const draft = configFor(values);
+    if (draft.sessionName.trim().length > STEAM_SERVER_NAME_LIMIT)
+      throw new Error('默认 Steam 服名超过 80 个字符，请填写较短的服名。');
+    const config = gameConfigSchema.parse(draft);
+    return mutate(() =>
       request('/instances', 'POST', {
-        name: values.name,
+        name: values.customMapName === true ? mapNameFor(values) : undefined,
         hostId: values.hostId,
         map: values.map,
         gamePort: Number(values.gamePort),
@@ -191,9 +215,13 @@ export default function NewInstanceDialog({
         branch: values.branch,
         autoBranchUpdate: values.autoBranchUpdate,
         serverFileSource: values.serverFileSource,
-        config: gameConfigSchema.parse(configFor(values)),
+        config: {
+          ...config,
+          sessionName: values.customSteamName === true ? config.sessionName : undefined,
+        },
       }),
     );
+  };
   return (
     <FormDialog
       title="新建地图"
@@ -201,6 +229,9 @@ export default function NewInstanceDialog({
       fields={fields}
       initial={{
         name: '',
+        sessionName: '',
+        customMapName: false,
+        customSteamName: false,
         branch:
           data?.serverFiles?.find((file) => file.id === initialFileSource)?.branch === 'preaquatica'
             ? 'preaquatica'
@@ -222,6 +253,27 @@ export default function NewInstanceDialog({
       onClose={onClose}
       onSubmit={handleSubmit}
       renderField={(field, values, change, busy) => {
+        if (field.key === 'name' || field.key === 'sessionName') {
+          const isMapName = field.key === 'name';
+          const customNameKey = isMapName ? 'customMapName' : 'customSteamName';
+          return (
+            <FormField
+              field={field}
+              value={isMapName ? mapNameFor(values) : steamNameFor(values)}
+              disabled={busy}
+              onChange={(value) =>
+                change({
+                  [field.key]: value,
+                  [customNameKey]: true,
+                })
+              }
+              reset={{
+                disabled: values[customNameKey] !== true,
+                onClick: () => change({ [field.key]: '', [customNameKey]: false }),
+              }}
+            />
+          );
+        }
         if (field.key === 'clusterId')
           return (
             <ClusterField

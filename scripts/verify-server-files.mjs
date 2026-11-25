@@ -163,7 +163,7 @@ export async function verifyServerFiles(context) {
   await filesPage();
   await card(base.id).getByRole('button', { name: '用于新地图', exact: true }).click();
   let dialog = page.getByRole('dialog');
-  await dialog.getByRole('textbox', { name: '名称', exact: true }).fill('复用文件新地图');
+  await dialog.getByRole('textbox', { name: /^后台地图名称/ }).fill('复用文件新地图');
   await dialog.getByRole('spinbutton', { name: '玩家上限', exact: true }).fill('1');
   for (const name of ['游戏端口', '查询端口', 'RCON 端口'])
     await dialog.getByRole('spinbutton', { name, exact: true }).fill(String(await availablePort()));

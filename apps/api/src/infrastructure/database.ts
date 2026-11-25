@@ -9,6 +9,7 @@ import type {
   Command,
   ConfigChange,
   ConsoleEntry,
+  GameBranch,
   Delivery,
   Dashboard,
   Host,
@@ -148,6 +149,7 @@ export interface RecordMap {
   audit: AuditEntry;
   'config-audit-details': { id: string; changes: ConfigChange[] };
   'cluster-presets': ClusterPreset;
+  'cluster-settings': { id: string; branch: GameBranch; serverNamePrefix: string };
   console: ConsoleEntry;
   'host-credentials': PrivateHost;
   'instance-credentials': PrivateInstance;

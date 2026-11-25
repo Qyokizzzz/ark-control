@@ -18,16 +18,19 @@ import type {
   Json,
   SaveClusterPresetInput,
   Schedule,
+  UpdateInstanceInput,
 } from '@ark-control/common';
 import {
   CLUSTER_ADMIN_PASSWORD_FEATURE,
   CONFIG_CHANGE_PREVIEW_LIMIT,
   MAPS,
   SHARED_MAP_FILES_FEATURE,
+  STEAM_SERVER_NAME_LIMIT,
   canDeleteStoppedInstance,
   canTerminateStartup,
   applyClusterPreset,
   clusterGameConfig,
+  defaultSteamServerName,
   effectiveGameConfig,
   estimateCapacity,
   gameConfigSchema,
@@ -441,9 +444,12 @@ export class ControlService {
       await this.validateFileSource(input.serverFileSource, input.hostId, connection, input.branch);
       const members = await this.db.list('instances', connection);
       const presets = await this.presetsForCluster(input.clusterId, connection);
+      const settings = input.clusterId
+        ? await this.db.get('cluster-settings', input.clusterId, connection)
+        : null;
       if (
         input.clusterId &&
-        (presets.length || members.some((item) => item.clusterId === input.clusterId))
+        (settings || presets.length || members.some((item) => item.clusterId === input.clusterId))
       )
         requireAccess('maps.configure', { kind: 'cluster', clusterId: input.clusterId });
       if (
@@ -453,7 +459,8 @@ export class ControlService {
         requireAccess('clusters.admin-password', { kind: 'cluster', clusterId: input.clusterId });
       if (
         input.clusterId &&
-        (presets.some((item) => item.branch !== gameBranch(input.branch)) ||
+        ((settings && settings.branch !== gameBranch(input.branch)) ||
+          presets.some((item) => item.branch !== gameBranch(input.branch)) ||
           members.some(
             (item) =>
               item.clusterId === input.clusterId &&
@@ -463,10 +470,20 @@ export class ControlService {
         throw new BusinessError('BRANCH_CONFLICT', '同一互通组需要使用相同 Steam 分支。');
       const id = randomUUID();
       const mapLabel = MAPS.find((item) => item.value === input.map)?.label ?? input.map;
+      const name = input.name ?? mapLabel;
+      const sessionName =
+        input.config.sessionName ?? defaultSteamServerName(name, settings?.serverNamePrefix);
+      if (sessionName.length > STEAM_SERVER_NAME_LIMIT)
+        throw new BusinessError(
+          'SESSION_NAME_TOO_LONG',
+          '默认 Steam 服名超过 80 个字符，请填写较短的服名。',
+        );
       const instance: Instance = {
         ...input,
         id,
+        name,
         mapLabel,
+        config: parse(gameConfigSchema, { ...input.config, sessionName }),
         status: 'stopped',
         desiredState: 'stopped',
         installed: false,
@@ -479,10 +496,7 @@ export class ControlService {
         buildId: null,
         createdAt: nowIso(),
       };
-      const conflict = validatePortAllocation(
-        instance,
-        await this.db.list('instances', connection),
-      );
+      const conflict = validatePortAllocation(instance, members);
       if (conflict) throw new BusinessError('PORT_CONFLICT', conflict);
       await this.db.put('instances', instance, connection);
       await this.db.put(
@@ -490,12 +504,7 @@ export class ControlService {
         { id, rconPassword: encryptSecret(newToken()) },
         connection,
       );
-      await this.audit(
-        '创建地图',
-        input.name,
-        `地图：${mapLabel}，需要安装服务端后启动。`,
-        connection,
-      );
+      await this.audit('创建地图', name, `地图：${mapLabel}，需要安装服务端后启动。`, connection);
       return instance;
     });
   }
@@ -506,10 +515,11 @@ export class ControlService {
   }
 
   async clusterPresetGroups(): Promise<ClusterPresetGroup[]> {
-    const [maps, presets, passwords] = await Promise.all([
+    const [maps, presets, passwords, settings] = await Promise.all([
       this.db.list('instances'),
       this.db.list('cluster-presets'),
       this.db.list('cluster-admin-passwords'),
+      this.db.list('cluster-settings'),
     ]);
     const protectedGroups = new Set(passwords.map(({ id }) => id));
     const groups = new Map<
@@ -539,28 +549,62 @@ export class ControlService {
       if (group.branch === preset.branch) group.presets.push(preset);
       groups.set(preset.clusterId, group);
     }
+    const settingsById = new Map(settings.map((item) => [item.id, item]));
+    for (const { id, branch } of settings) {
+      if (!groups.has(id)) groups.set(id, { branch, maps: [], presets: [] });
+    }
     return [...groups]
       .flatMap(([id, group]) => {
         const target = { kind: 'cluster', clusterId: id } as const;
         const canSave = allowed('maps.configure', target);
-        if (!canSave && !group.maps.some((map) => allowed('maps.configure', instanceTarget(map))))
-          return [];
+        const canLoad =
+          canSave || group.maps.some((map) => allowed('maps.configure', instanceTarget(map)));
+        const canManagePlugins =
+          allowed('plugins.install', target) ||
+          group.maps.some((map) => allowed('plugins.install', instanceTarget(map)));
+        const canManageAdmin = group.maps.length > 0 && allowed('clusters.admin-password', target);
+        if (!canLoad && !canManagePlugins && !canManageAdmin) return [];
         return [
           {
             id,
             branch: group.branch,
-            presets: group.presets.sort(
-              (left, right) =>
-                left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-            ),
+            serverNamePrefix: settingsById.get(id)?.serverNamePrefix ?? '',
+            presets: canLoad
+              ? group.presets.sort(
+                  (left, right) =>
+                    left.createdAt.localeCompare(right.createdAt) ||
+                    left.id.localeCompare(right.id),
+                )
+              : [],
             mapCount: group.maps.length,
             canJoin:
               canSave && (!protectedGroups.has(id) || allowed('clusters.admin-password', target)),
             canSave,
+            canManagePlugins,
+            canManageAdmin,
           },
         ];
       })
       .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  async configureCluster(clusterId: string, serverNamePrefix: string) {
+    const target = { kind: 'cluster', clusterId } as const;
+    requireAccess('maps.configure', target);
+    return this.db.transaction(async (connection) => {
+      const previous = await this.db.get('cluster-settings', clusterId, connection);
+      if (previous?.serverNamePrefix === serverNamePrefix) return previous;
+      const members = await this.db.listBy('instances', 'clusterId', clusterId, connection);
+      const map = members.find((item) => item.clusterId === clusterId);
+      const branch = map
+        ? gameBranch(map.branch)
+        : (previous?.branch ?? (await this.presetsForCluster(clusterId, connection))[0]?.branch);
+      if (!branch) throw new BusinessError('NOT_FOUND', '当前工作空间没有这个互通组。', 404);
+      const settings = { id: clusterId, branch, serverNamePrefix };
+      await this.db.put('cluster-settings', settings, connection);
+      await this.audit('编辑互通组设置', clusterId, '已保存 Steam 服名公共前缀。', connection);
+      return settings;
+    });
   }
 
   async saveClusterPreset(clusterId: string, input: SaveClusterPresetInput, operator: Admin) {
@@ -573,7 +617,10 @@ export class ControlService {
         this.presetsForCluster(clusterId, connection),
       ]);
       const members = maps.filter((map) => map.clusterId === clusterId);
-      const branch = members[0] ? gameBranch(members[0].branch) : presets[0]?.branch;
+      const branch = members[0]
+        ? gameBranch(members[0].branch)
+        : (presets[0]?.branch ??
+          (await this.db.get('cluster-settings', clusterId, connection))?.branch);
       if (!branch) throw new BusinessError('NOT_FOUND', '当前工作空间没有这个互通组。', 404);
       const previous = input.overwrite
         ? presets.find(({ id }) => id === input.overwrite?.id)
@@ -751,7 +798,7 @@ export class ControlService {
   }
   async updateInstance(
     id: string,
-    input: Partial<Omit<CreateInstanceInput, 'hostId'>>,
+    input: UpdateInstanceInput,
     operator: Admin,
   ): Promise<InstanceUpdateResult> {
     return this.db.transaction(async (connection) => {
@@ -759,6 +806,10 @@ export class ControlService {
       requireAccess('maps.configure', instanceTarget(current));
       const clusterChanged = input.clusterId !== undefined && input.clusterId !== current.clusterId;
       const targetCluster = input.clusterId ?? current.clusterId;
+      const settings =
+        targetCluster && (input.clusterId !== undefined || input.branch)
+          ? await this.db.get('cluster-settings', targetCluster, connection)
+          : null;
       const presets =
         input.clusterId !== undefined || input.branch
           ? await this.presetsForCluster(targetCluster, connection)
@@ -767,7 +818,7 @@ export class ControlService {
         for (const clusterId of new Set([current.clusterId, input.clusterId])) {
           if (
             clusterId &&
-            ((clusterId === targetCluster && presets.length > 0) ||
+            ((clusterId === targetCluster && (settings || presets.length > 0)) ||
               (await this.db.listBy('instances', 'clusterId', clusterId, connection)).some(
                 (peer) => peer.id !== id,
               ))
@@ -791,7 +842,8 @@ export class ControlService {
         );
       if (
         targetCluster &&
-        (presets.some((item) => item.branch !== gameBranch(input.branch ?? current.branch)) ||
+        ((settings && settings.branch !== gameBranch(input.branch ?? current.branch)) ||
+          presets.some((item) => item.branch !== gameBranch(input.branch ?? current.branch)) ||
           (await this.db.list('instances', connection)).some(
             (item) =>
               item.id !== id &&

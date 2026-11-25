@@ -47,13 +47,18 @@ export default function Instances() {
   const query = useWorkspaceStore((state) => state.query);
   const can = useWorkspaceCan();
   const space = useWorkspaceSelection((state) => state.active);
-  const canConfigureClusters =
-    can('clusters.admin-password') ||
-    space?.grants.some(
-      ({ scope }) =>
-        scope.kind === 'cluster' &&
-        can('clusters.admin-password', { kind: 'cluster', clusterId: scope.id }),
-    );
+  const canConfigureClusters = (
+    ['maps.configure', 'clusters.admin-password', 'plugins.install'] as const
+  ).some(
+    (permission) =>
+      can(permission) ||
+      space?.grants.some(
+        ({ scope }) =>
+          scope.kind === 'cluster' && can(permission, { kind: 'cluster', clusterId: scope.id }),
+      ) ||
+      (permission === 'plugins.install' &&
+        data?.instances.some((map) => map.clusterId && can(permission, instanceTarget(map)))),
+  );
   const canCreate = data?.hosts.some((host) =>
     can('maps.create', { kind: 'host', hostId: host.id }),
   );

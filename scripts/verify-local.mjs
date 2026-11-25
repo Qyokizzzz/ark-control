@@ -1166,7 +1166,7 @@ try {
   await openPage('', '运行概况');
   await page.getByRole('button', { name: '新建地图', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('textbox', { name: /^名称/ }).fill('移动端验收地图');
+  await dialog.getByRole('textbox', { name: /^后台地图名称/ }).fill('移动端验收地图');
   await dialog.getByRole('button', { name: '创建地图', exact: true }).click();
   await dialog.waitFor({ state: 'hidden' });
   await page.getByRole('heading', { name: '移动端验收地图', exact: true }).waitFor();

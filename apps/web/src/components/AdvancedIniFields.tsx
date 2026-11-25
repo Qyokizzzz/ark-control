@@ -13,7 +13,7 @@ import {
   Typography,
 } from '@mui/material';
 import { CaretDownIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
-import { INI_FILES, INI_SECTIONS } from '@ark-control/common';
+import { INI_FILES, INI_SECTIONS, isPrivateClusterGameKey } from '@ark-control/common';
 import type { IniFile, Instance } from '@ark-control/common';
 import { useTranslation } from 'react-i18next';
 import {
@@ -370,7 +370,7 @@ export default function AdvancedIniFields({
   onMaturityChange,
   onChange,
 }: {
-  instance: Instance;
+  instance?: Instance;
   entries: EntriesByOption;
   overrides: EntriesByOption;
   disabled: boolean;
@@ -389,32 +389,41 @@ export default function AdvancedIniFields({
     return terms.every((term) => haystack.includes(term));
   };
   const filtered = (group: (typeof advancedGroups)[number]) =>
-    group.options.filter((option) =>
-      matches(group.title, option.label, option.key, option.section, INI_FILES[option.file]),
+    group.options.filter(
+      (option) =>
+        (instance || !isPrivateClusterGameKey(option.key)) &&
+        matches(group.title, option.label, option.key, option.section, INI_FILES[option.file]),
     );
   const top = filtered(pinned);
   const groups = advancedGroups
     .slice(1)
     .map((group) => ({ title: group.title, options: filtered(group) }))
     .filter((group) => group.options.length);
-  const managed = [
-    { field: { key: 'Port', label: '游戏端口', kind: 'number' }, value: instance.gamePort },
-    {
-      field: { key: 'QueryPort', label: 'Steam 查询端口', kind: 'number' },
-      value: instance.queryPort,
-    },
-    { field: { key: 'RCONPort', label: 'RCON 端口', kind: 'number' }, value: instance.rconPort },
-    { field: { key: 'RCONEnabled', label: '启用 RCON', kind: 'switch' }, value: true },
-    {
-      field: {
-        key: 'ServerAdminPassword',
-        label: '管理密码',
-        kind: 'password',
-        placeholder: '主机助手托管',
-      },
-      value: '',
-    },
-  ].filter(({ field }) => matches('主机助手托管', field.key, field.label, INI_FILES.settings));
+  const managed = (
+    instance
+      ? [
+          { field: { key: 'Port', label: '游戏端口', kind: 'number' }, value: instance.gamePort },
+          {
+            field: { key: 'QueryPort', label: 'Steam 查询端口', kind: 'number' },
+            value: instance.queryPort,
+          },
+          {
+            field: { key: 'RCONPort', label: 'RCON 端口', kind: 'number' },
+            value: instance.rconPort,
+          },
+          { field: { key: 'RCONEnabled', label: '启用 RCON', kind: 'switch' }, value: true },
+          {
+            field: {
+              key: 'ServerAdminPassword',
+              label: '管理密码',
+              kind: 'password',
+              placeholder: '主机助手托管',
+            },
+            value: '',
+          },
+        ]
+      : []
+  ).filter(({ field }) => matches('主机助手托管', field.key, field.label, INI_FILES.settings));
   const customMatches = new Map(
     [...entries].filter(([id, rows]) => {
       const row = rows[0]!;

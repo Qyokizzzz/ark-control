@@ -24,10 +24,17 @@ export type ClusterPreset = ClusterPresetContent & {
 export interface ClusterPresetGroup {
   id: string;
   branch: GameBranch;
+  serverNamePrefix: string;
   presets: ClusterPreset[];
   mapCount: number;
   canJoin: boolean;
   canSave: boolean;
+  canManagePlugins: boolean;
+  canManageAdmin: boolean;
+}
+
+export function defaultSteamServerName(mapName: string, prefix = '') {
+  return [prefix.trim(), mapName.trim()].filter(Boolean).join('-');
 }
 
 const privateKeys = new Set([
@@ -55,8 +62,9 @@ const modListKeys = {
   ]),
   game: new Set([iniAddress(INI_SECTIONS.workshop, 'ModIDS')]),
 };
-const isPrivate = (entry: IniEntry) =>
-  privateKeys.has(entry.key.toLowerCase()) || privateKeyName.test(entry.key);
+export const isPrivateClusterGameKey = (key: string) =>
+  privateKeys.has(key.toLowerCase()) || privateKeyName.test(key);
+const isPrivate = (entry: IniEntry) => isPrivateClusterGameKey(entry.key);
 
 function publicIni(file: IniFile, text: string) {
   return serializeIni(iniEntries(file, text).filter((entry) => !isPrivate(entry)));

@@ -19,12 +19,18 @@ import {
   CONFIG_SYNC_FEATURE,
   GAME_BRANCHES,
   INI_FILES,
+  STEAM_SERVER_NAME_LIMIT,
   applyClusterPreset,
+  configuredIni,
+  defaultSteamServerName,
+  iniEntries,
+  isPrivateClusterGameKey,
   shareableServerFiles,
 } from '@ark-control/common';
 import type {
   Command,
   ConfigSaveSummary,
+  GameConfig,
   Host,
   Instance,
   InstanceUpdateResult,
@@ -55,6 +61,7 @@ import FormField from './FormField';
 import Surface from './Surface';
 import { formatDate, useMutation } from './common';
 import type { Field, FormValues } from './common';
+import { useClusterPresets } from './use-cluster-presets';
 
 const manualFields: { file: IniFile; field: Field }[] = [
   {
@@ -100,15 +107,7 @@ const resetOptions = {
   },
 } satisfies Record<GameFormResetScope, { title: string; message: string }>;
 
-export default function InstanceConfigPanel({
-  instance,
-  serverFiles,
-  disabled,
-  host,
-  syncTask,
-  saveSummary,
-  onSaved,
-}: {
+type MapConfigProps = {
   instance: Instance;
   serverFiles: ServerFiles[];
   disabled: boolean;
@@ -116,11 +115,23 @@ export default function InstanceConfigPanel({
   syncTask?: Command;
   saveSummary?: ConfigSaveSummary;
   onSaved: (summary: ConfigSaveSummary) => void;
-}) {
+};
+type PresetConfigProps = {
+  presetConfig: GameConfig;
+  onSavePreset: (config: GameConfig) => void;
+};
+
+export default function InstanceConfigPanel(props: MapConfigProps | PresetConfigProps) {
   const { t } = useTranslation();
   const mutate = useMutation();
+  const map = 'instance' in props ? props : undefined;
+  const instance = map?.instance;
+  const clusterCatalog = useClusterPresets(!!instance?.clusterId);
+  const baseConfig = 'presetConfig' in props ? props.presetConfig : props.instance.config;
+  const onSavePreset = 'onSavePreset' in props ? props.onSavePreset : undefined;
   const [draft, setDraft] = useState<ReturnType<typeof readGameForm>>(() => {
-    const values = readGameForm(instance.config);
+    const values = readGameForm(baseConfig);
+    if (!instance) return values;
     return {
       ...values,
       basic: {
@@ -142,53 +153,66 @@ export default function InstanceConfigPanel({
     previousId?: string;
     requestedId?: string;
   }>();
-  const editableSource = !instance.installed && !instance.pid && !instance.serverFileId;
+  const editableSource =
+    !!instance && !instance.installed && !instance.pid && !instance.serverFileId;
   const editableBranch = editableSource && !instance.filesTouched;
-  const branch = editableBranch ? draft.basic.branch : (instance.branch ?? 'public');
-  const blocked = disabled || busy;
+  const branch = editableBranch ? draft.basic.branch : (instance?.branch ?? 'public');
+  const blocked = !!map?.disabled || busy;
+  const mapName = instance?.mapLabel || instance?.map || '';
+  const prefix = clusterCatalog.groups.find(
+    (group) => group.id === instance?.clusterId,
+  )?.serverNamePrefix;
+  const steamName = defaultSteamServerName(
+    String(draft.basic.name ?? '').trim() || mapName,
+    prefix,
+  );
   const overrides = useMemo(() => manualOverrides(draft.manual), [draft.manual]);
   const estimate = imprintEstimate(
-    draftConfig(instance.config, draft.basic, draft.advanced, draft.manual),
+    draftConfig(baseConfig, draft.basic, draft.advanced, draft.manual),
   );
 
-  const fields: Field[] = [
-    basicGameFields[0]!,
-    { key: 'name', label: '后台地图名称', required: true, maxLength: 80 },
-    ...basicGameFields.slice(1),
-    ...(editableBranch
-      ? [
-          {
-            key: 'branch',
-            label: 'Steam 版本分支',
-            kind: 'select' as const,
-            required: true,
-            options: GAME_BRANCHES.map(({ value, label }) => ({ value, label })),
-          },
-        ]
-      : []),
-    ...(editableSource
-      ? [
-          {
-            key: 'serverFileSource',
-            label: '服务端文件来源',
-            kind: 'select' as const,
-            options: [
-              { value: 'auto', label: '自动共用本机同分支文件，没有时下载' },
-              ...serverFiles
-                .filter(
-                  (file) =>
-                    file.hostId === instance.hostId &&
-                    file.branch === branch &&
-                    (shareableServerFiles(file) || file.id === instance.serverFileSource),
-                )
-                .map((file) => ({ value: file.id, label: file.name })),
-            ],
-          },
-        ]
-      : []),
-    { key: 'autoRestart', label: '自动拉起', kind: 'switch' },
-    { key: 'autoBranchUpdate', label: '自动跟随分支更新（备份后维护重启）', kind: 'switch' },
-  ];
+  const fields: Field[] = map
+    ? [
+        basicGameFields[0]!,
+        { key: 'name', label: '后台地图名称', required: true, maxLength: 80 },
+        ...basicGameFields.slice(1),
+        ...(editableBranch
+          ? [
+              {
+                key: 'branch',
+                label: 'Steam 版本分支',
+                kind: 'select' as const,
+                required: true,
+                options: GAME_BRANCHES.map(({ value, label }) => ({ value, label })),
+              },
+            ]
+          : []),
+        ...(editableSource
+          ? [
+              {
+                key: 'serverFileSource',
+                label: '服务端文件来源',
+                kind: 'select' as const,
+                options: [
+                  { value: 'auto', label: '自动共用本机同分支文件，没有时下载' },
+                  ...map.serverFiles
+                    .filter(
+                      (file) =>
+                        file.hostId === map.instance.hostId &&
+                        file.branch === branch &&
+                        (shareableServerFiles(file) || file.id === map.instance.serverFileSource),
+                    )
+                    .map((file) => ({ value: file.id, label: file.name })),
+                ],
+              },
+            ]
+          : []),
+        { key: 'autoRestart', label: '自动拉起', kind: 'switch' },
+        { key: 'autoBranchUpdate', label: '自动跟随分支更新（备份后维护重启）', kind: 'switch' },
+      ]
+    : basicGameFields.filter(
+        ({ key }) => !['sessionName', 'serverPassword', 'modIds'].includes(key),
+      );
 
   const handleBasicChange = useCallback((key: string, value: FormValues[string]) => {
     setDirty(true);
@@ -240,7 +264,21 @@ export default function InstanceConfigPanel({
       setError(null);
       setBusy(true);
       try {
-        const config = saveGameForm(instance.config, draft.basic, draft.advanced, draft.manual);
+        const config = saveGameForm(baseConfig, draft.basic, draft.advanced, draft.manual);
+        if (!map) {
+          const privateEntry = (['settings', 'game'] as const)
+            .flatMap((file) =>
+              configuredIni(config, file).flatMap((text) => iniEntries(file, text)),
+            )
+            .find(({ key }) => isPrivateClusterGameKey(key));
+          if (privateEntry)
+            throw new Error(
+              t('「{{key}}」请在对应的地图或模组页面设置。', { key: privateEntry.key }),
+            );
+          onSavePreset?.(config);
+          return;
+        }
+        const { instance, onSaved } = map;
         const updated = await mutate(
           () =>
             request<InstanceUpdateResult>(`/instances/${instance.id}`, 'PATCH', {
@@ -265,14 +303,14 @@ export default function InstanceConfigPanel({
         setBusy(false);
       }
     },
-    [blocked, draft, editableBranch, editableSource, instance, mutate, onSaved],
+    [blocked, baseConfig, draft, editableBranch, editableSource, map, mutate, onSavePreset, t],
   );
 
   // A dashboard refresh already in flight at submit time can still contain the previous receipt.
   const awaitingRefresh =
     !!lastSave?.requestedId &&
-    instance.configSyncCommandId === lastSave.previousId &&
-    lastSave.requestedId !== instance.configSyncCommandId;
+    instance?.configSyncCommandId === lastSave.previousId &&
+    lastSave.requestedId !== instance?.configSyncCommandId;
   return (
     <Box component="form" onSubmit={handleSubmit} aria-label={t('游戏配置')}>
       <Surface>
@@ -282,35 +320,37 @@ export default function InstanceConfigPanel({
           spacing={2.5}
           sx={sectionSpacing}
         >
-          <ClusterPresetActions
-            clusterId={instance.clusterId}
-            disabled={blocked}
-            getDraft={(mode) => ({
-              kind: 'game',
-              config: (mode === 'save' ? saveGameForm : draftConfig)(
-                instance.config,
-                draft.basic,
-                draft.advanced,
-                draft.manual,
-              ),
-            })}
-            onError={setError}
-            onLoad={(preset) => {
-              if (preset.kind !== 'game') return;
-              setDraft((current) => {
-                const config = draftConfig(
+          {instance && (
+            <ClusterPresetActions
+              clusterId={instance.clusterId}
+              disabled={blocked}
+              getDraft={(mode) => ({
+                kind: 'game',
+                config: (mode === 'save' ? saveGameForm : draftConfig)(
                   instance.config,
-                  current.basic,
-                  current.advanced,
-                  current.manual,
-                );
-                const next = readGameForm(applyClusterPreset(config, preset));
-                return { ...next, basic: { ...current.basic, ...next.basic } };
-              });
-              setDirty(true);
-              setError(null);
-            }}
-          />
+                  draft.basic,
+                  draft.advanced,
+                  draft.manual,
+                ),
+              })}
+              onError={setError}
+              onLoad={(preset) => {
+                if (preset.kind !== 'game') return;
+                setDraft((current) => {
+                  const config = draftConfig(
+                    instance.config,
+                    current.basic,
+                    current.advanced,
+                    current.manual,
+                  );
+                  const next = readGameForm(applyClusterPreset(config, preset));
+                  return { ...next, basic: { ...current.basic, ...next.basic } };
+                });
+                setDirty(true);
+                setError(null);
+              }}
+            />
+          )}
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             gap={1}
@@ -325,7 +365,11 @@ export default function InstanceConfigPanel({
                 {sectionReset('basic')}
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {t('设置 Steam 服名、人数和常用倍率。保存后，下次启动地图时应用。')}
+                {t(
+                  instance
+                    ? '设置 Steam 服名、人数和常用倍率。保存后，下次启动地图时应用。'
+                    : '设置玩家上限、PvE 模式和常用倍率。',
+                )}
               </Typography>
             </Box>
             <Stack direction="row" gap={1} sx={{ flexShrink: 0 }}>
@@ -350,14 +394,33 @@ export default function InstanceConfigPanel({
           <Box sx={configGrid}>
             {fields.map((field) => {
               const address = basicIniAddresses[field.key];
+              const value = draft.basic[field.key];
+              const isSteamName = field.key === 'sessionName';
+              const defaultName =
+                field.key === 'name' ? mapName : isSteamName ? steamName : undefined;
               return (
                 <Stack key={field.key} spacing={0.5} sx={{ minWidth: 0 }}>
                   <FormField
-                    field={field}
-                    value={draft.basic[field.key]}
+                    field={
+                      isSteamName && String(value).trim().length > STEAM_SERVER_NAME_LIMIT
+                        ? { ...field, helper: '默认 Steam 服名超过 80 个字符，请填写较短的服名。' }
+                        : field
+                    }
+                    value={value}
                     onChange={(value) => handleBasicChange(field.key, value)}
                     disabled={blocked}
                     compact
+                    reset={
+                      defaultName === undefined
+                        ? undefined
+                        : {
+                            disabled:
+                              value === defaultName ||
+                              (isSteamName && (clusterCatalog.loading || !!clusterCatalog.error)),
+                            tooltip: isSteamName ? clusterCatalog.error : undefined,
+                            onClick: () => handleBasicChange(field.key, defaultName),
+                          }
+                    }
                   />
                   {address && (
                     <IniOverride
@@ -454,16 +517,23 @@ export default function InstanceConfigPanel({
                 {t('有尚未保存的修改。')}
               </Typography>
             ) : (
-              <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
-                <ConfigSyncStatus
-                  task={awaitingRefresh ? undefined : syncTask}
-                  waiting={awaitingRefresh}
-                  host={host}
-                />
-                {saveSummary && <SavePreview summary={saveSummary} />}
-              </Stack>
+              map && (
+                <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
+                  <ConfigSyncStatus
+                    task={awaitingRefresh ? undefined : map.syncTask}
+                    waiting={awaitingRefresh}
+                    host={map.host}
+                  />
+                  {map.saveSummary && <SavePreview summary={map.saveSummary} />}
+                </Stack>
+              )
             )}
-            <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ flexShrink: 0 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              justifyContent="flex-end"
+              sx={{ flexShrink: 0, ml: 'auto' }}
+            >
               <Button
                 type="button"
                 variant="outlined"
@@ -482,7 +552,7 @@ export default function InstanceConfigPanel({
                 disabled={blocked}
                 sx={{ whiteSpace: 'nowrap' }}
               >
-                {t(busy ? '正在保存…' : '保存配置')}
+                {t(busy ? '正在保存…' : instance ? '保存配置' : '保存预设')}
               </Button>
             </Stack>
           </Stack>
@@ -497,7 +567,14 @@ export default function InstanceConfigPanel({
           <DialogTitle>{t(resetOptions[resetScope].title)}</DialogTitle>
           <DialogContent>
             <DialogContentText id="game-config-reset-description">
-              {t(resetOptions[resetScope].message)} {t('点击「保存配置」后提交。')}
+              {t(
+                !instance && resetScope === 'all'
+                  ? '恢复基础和高级游戏设置的默认值，并清空手写 INI。'
+                  : !instance && resetScope === 'basic'
+                    ? '恢复基础游戏设置的默认值。手写覆盖仍优先。'
+                    : resetOptions[resetScope].message,
+              )}{' '}
+              {t(instance ? '点击「保存配置」后提交。' : '点击「保存预设」后提交。')}
             </DialogContentText>
           </DialogContent>
           <DialogActions>

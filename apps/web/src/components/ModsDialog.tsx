@@ -41,16 +41,18 @@ function mergeIds(selected: string[], input: string) {
 
 export default function ModsDialog({
   initial,
-  overridden,
+  overridden = false,
   clusterId,
-  presetModOverride,
+  presetModOverride = false,
+  stageOnly = false,
   onClose,
   onSave,
 }: {
   initial: string[];
-  overridden: boolean;
-  clusterId: string;
-  presetModOverride: boolean;
+  overridden?: boolean;
+  clusterId?: string;
+  presetModOverride?: boolean;
+  stageOnly?: boolean;
   onClose: () => void;
   onSave: (ids: string[], loadedFromGroup: boolean) => Promise<unknown>;
 }) {
@@ -116,14 +118,14 @@ export default function ModsDialog({
       setSaveError('');
       try {
         await onSave(merged, loadedFromGroup);
-        onClose();
+        if (!stageOnly) onClose();
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : '保存失败。');
       } finally {
         setBusy(false);
       }
     },
-    [ids, manual, loadedFromGroup, onSave, onClose],
+    [ids, manual, loadedFromGroup, onSave, onClose, stageOnly],
   );
 
   return (
@@ -132,24 +134,26 @@ export default function ModsDialog({
         <DialogTitle>{t('编辑模组')}</DialogTitle>
         <DialogContent>
           <Stack gap={2} sx={{ pt: 1 }}>
-            <ClusterPresetActions
-              clusterId={clusterId}
-              disabled={busy}
-              modOverride={presetModOverride}
-              getDraft={(mode) => ({
-                kind: 'mods',
-                modIds: mode === 'save' ? mergeIds(ids, manual) : ids,
-              })}
-              onError={setFieldError}
-              onLoad={(preset) => {
-                if (preset.kind !== 'mods') return;
-                setIds([...preset.modIds]);
-                setManual('');
-                setFieldError('');
-                setSaveError('');
-                setLoadedFromGroup(true);
-              }}
-            />
+            {clusterId !== undefined && (
+              <ClusterPresetActions
+                clusterId={clusterId}
+                disabled={busy}
+                modOverride={presetModOverride}
+                getDraft={(mode) => ({
+                  kind: 'mods',
+                  modIds: mode === 'save' ? mergeIds(ids, manual) : ids,
+                })}
+                onError={setFieldError}
+                onLoad={(preset) => {
+                  if (preset.kind !== 'mods') return;
+                  setIds([...preset.modIds]);
+                  setManual('');
+                  setFieldError('');
+                  setSaveError('');
+                  setLoadedFromGroup(true);
+                }}
+              />
+            )}
             {overridden && !loadedFromGroup && (
               <Alert severity="warning">
                 {t('手写配置里的 ActiveMods 会覆盖这份列表。如需使用这里的列表，请先移除手写项。')}
@@ -271,7 +275,7 @@ export default function ModsDialog({
             {t('取消')}
           </Button>
           <Button type="submit" variant="contained" disabled={busy}>
-            {t(busy ? '正在保存…' : '保存')}
+            {t(busy ? '正在保存…' : stageOnly ? '保存预设' : '保存')}
           </Button>
         </DialogActions>
       </Box>

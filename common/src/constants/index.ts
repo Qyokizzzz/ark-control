@@ -6,6 +6,8 @@ export const SHARED_MAP_FILES_FEATURE = 'shared-map-files-v1';
 export const CONFIG_SYNC_FEATURE = 'config-sync-v1';
 export const CLUSTER_ADMIN_PASSWORD_FEATURE = 'cluster-admin-password-v1';
 export const CONFIG_CHANGE_PREVIEW_LIMIT = 3;
+export const STEAM_SERVER_NAME_LIMIT = 80;
+export const CLUSTER_SERVER_NAME_PREFIX_LIMIT = STEAM_SERVER_NAME_LIMIT - 2;
 export const MAPS = [
   { value: 'TheIsland', label: '孤岛' },
   { value: 'ScorchedEarth_P', label: '焦土' },

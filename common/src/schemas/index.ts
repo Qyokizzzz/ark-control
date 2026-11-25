@@ -1,37 +1,42 @@
 import { z } from 'zod';
-import { COMMAND_KINDS, MAPS } from '@common/constants';
+import {
+  CLUSTER_SERVER_NAME_PREFIX_LIMIT,
+  COMMAND_KINDS,
+  MAPS,
+  STEAM_SERVER_NAME_LIMIT,
+} from '@common/constants';
 import { gameIniIssue } from '@common/game-config';
 
 const name = z.string().trim().min(1).max(80);
 const port = z.number().int().min(1024).max(65534);
-export const gameConfigSchema = z
-  .object({
-    sessionName: z.string().trim().min(1).max(80).default('ARK Community'),
-    serverPassword: z.string().max(80).default(''),
-    maxPlayers: z.number().int().min(1).max(200).default(20),
-    pve: z.boolean().default(true),
-    xp: z.number().min(0.1).max(100).default(2),
-    harvest: z.number().min(0.1).max(100).default(2),
-    taming: z.number().min(0.1).max(100).default(3),
-    breeding: z.number().min(0.01).max(100).default(0.5),
-    eggHatch: z.number().min(0.1).max(1000).default(5),
-    babyMature: z.number().min(0.1).max(1000).default(5),
-    difficulty: z.number().min(0.1).max(20).default(5),
-    autoSaveMinutes: z.number().int().min(5).max(60).default(15),
-    modIds: z
-      .array(z.string().regex(/^\d{1,20}$/))
-      .max(60)
-      .default([]),
-    advancedIni: z
-      .object({ settings: z.string().max(50000), game: z.string().max(50000) })
-      .optional(),
-    extraGameIni: z.string().max(50000).default(''),
-    extraSettingsIni: z.string().max(50000).default(''),
-  })
-  .superRefine((config, context) => {
-    const message = gameIniIssue(config);
-    if (message) context.addIssue({ code: 'custom', message });
-  });
+const steamServerName = z.string().trim().min(1).max(STEAM_SERVER_NAME_LIMIT);
+const gameConfigFields = z.object({
+  sessionName: steamServerName.default('ARK Community'),
+  serverPassword: z.string().max(80).default(''),
+  maxPlayers: z.number().int().min(1).max(200).default(20),
+  pve: z.boolean().default(true),
+  xp: z.number().min(0.1).max(100).default(2),
+  harvest: z.number().min(0.1).max(100).default(2),
+  taming: z.number().min(0.1).max(100).default(3),
+  breeding: z.number().min(0.01).max(100).default(0.5),
+  eggHatch: z.number().min(0.1).max(1000).default(5),
+  babyMature: z.number().min(0.1).max(1000).default(5),
+  difficulty: z.number().min(0.1).max(20).default(5),
+  autoSaveMinutes: z.number().int().min(5).max(60).default(15),
+  modIds: z
+    .array(z.string().regex(/^\d{1,20}$/))
+    .max(60)
+    .default([]),
+  advancedIni: z
+    .object({ settings: z.string().max(50000), game: z.string().max(50000) })
+    .optional(),
+  extraGameIni: z.string().max(50000).default(''),
+  extraSettingsIni: z.string().max(50000).default(''),
+});
+export const gameConfigSchema = gameConfigFields.superRefine((config, context) => {
+  const message = gameIniIssue(config);
+  if (message) context.addIssue({ code: 'custom', message });
+});
 const clusterPresetFields = {
   name,
   overwrite: z.object({ id: z.uuid(), revision: z.uuid() }).optional(),
@@ -51,7 +56,14 @@ export const gameAdminPasswordSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{1,128}$/, '游戏管理员密码需为 1–128 位字母、数字、短横线或下划线。');
 export const clusterIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{0,48}$/);
-export const createInstanceSchema = z.object({
+export const clusterSettingsSchema = z.object({
+  serverNamePrefix: z
+    .string()
+    .trim()
+    .max(CLUSTER_SERVER_NAME_PREFIX_LIMIT)
+    .refine((value) => !/[\r\n]/.test(value) && !value.includes('\0'), '公共前缀请填写一行文本。'),
+});
+const instanceFields = z.object({
   branch: z.enum(['public', 'preaquatica']).default('public'),
   autoBranchUpdate: z.boolean().default(true),
   serverFileSource: z
@@ -66,6 +78,10 @@ export const createInstanceSchema = z.object({
   rconPort: port.default(27020),
   autoRestart: z.boolean().default(true),
   config: gameConfigSchema.default(() => gameConfigSchema.parse({})),
+});
+export const createInstanceSchema = instanceFields.extend({
+  name: name.optional(),
+  config: gameConfigFields.extend({ sessionName: steamServerName.optional() }).prefault({}),
 });
 export const fileTaskSchema = z.object({
   branch: z.enum(['public', 'preaquatica']).optional(),
@@ -106,7 +122,7 @@ export const serverFilesReportSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
-export const updateInstanceSchema = createInstanceSchema.omit({ hostId: true }).partial();
+export const updateInstanceSchema = instanceFields.omit({ hostId: true }).partial();
 export const botSchema = z.object({
   name,
   appId: z
@@ -212,6 +228,7 @@ export const connectionInviteSchema = z.object({
 });
 export type ConnectionNetworkInput = z.infer<typeof connectionNetworkSchema>;
 export type CreateInstanceInput = z.infer<typeof createInstanceSchema>;
+export type UpdateInstanceInput = z.infer<typeof updateInstanceSchema>;
 export type BotInput = z.infer<typeof botSchema>;
 export type SubscriptionInput = z.infer<typeof subscriptionSchema>;
 export type CommandInput = z.infer<typeof commandSchema>;

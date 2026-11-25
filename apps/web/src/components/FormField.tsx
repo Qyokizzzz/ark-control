@@ -1,4 +1,15 @@
-import { Box, FormControlLabel, MenuItem, Switch, TextField, Typography } from '@mui/material';
+import {
+  Box,
+  FormControlLabel,
+  IconButton,
+  InputAdornment,
+  MenuItem,
+  Switch,
+  TextField,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import type { Field, FormValues } from './common';
 
@@ -8,14 +19,17 @@ export default function FormField({
   onChange,
   disabled,
   compact,
+  reset,
 }: {
   field: Field;
   value?: FormValues[string];
   onChange: (value: FormValues[string]) => void;
   disabled?: boolean;
   compact?: boolean;
+  reset?: { onClick: () => void; disabled?: boolean; tooltip?: string };
 }) {
   const { t } = useTranslation();
+  const label = t(field.label);
   const unavailable = field.disabled || disabled;
   if (field.kind === 'switch') {
     return (
@@ -30,7 +44,7 @@ export default function FormField({
               slotProps={{ input: { role: 'switch' } }}
             />
           }
-          label={t(field.label)}
+          label={label}
         />
         {field.helper && (
           <Typography display="block" variant="caption" color="text.secondary">
@@ -40,11 +54,12 @@ export default function FormField({
       </Box>
     );
   }
+  const resetLabel = reset && t('将{{field}}重置为默认值', { field: label });
   return (
     <TextField
       fullWidth
       size={compact ? 'small' : 'medium'}
-      label={t(field.label)}
+      label={label}
       required={field.required}
       type={field.kind === 'password' ? 'password' : field.kind === 'number' ? 'number' : 'text'}
       select={field.kind === 'select'}
@@ -55,6 +70,26 @@ export default function FormField({
       value={value ?? ''}
       helperText={field.helper ? t(field.helper) : undefined}
       slotProps={{
+        input: reset && {
+          endAdornment: (
+            <InputAdornment position="end">
+              <Tooltip title={reset.tooltip ?? resetLabel}>
+                <span style={{ display: 'inline-flex' }}>
+                  <IconButton
+                    type="button"
+                    edge="end"
+                    size="small"
+                    aria-label={resetLabel}
+                    disabled={unavailable || reset.disabled}
+                    onClick={reset.onClick}
+                  >
+                    <ArrowCounterClockwiseIcon size={16} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </InputAdornment>
+          ),
+        },
         htmlInput: {
           min: field.min,
           max: field.max,

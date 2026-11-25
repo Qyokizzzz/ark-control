@@ -22,8 +22,9 @@ import { useMutation } from './common';
 import { useClusterPresets } from './use-cluster-presets';
 
 type Mode = 'save' | 'load';
-type Draft = { kind: 'game'; config: GameConfig } | { kind: 'mods'; modIds: string[] };
-type OpenPreset = { mode: Mode; draft: Draft };
+export type ClusterPresetDraft =
+  { kind: 'game'; config: GameConfig } | { kind: 'mods'; modIds: string[] };
+type OpenPreset = { mode: Mode; draft: ClusterPresetDraft };
 type Difference = { label: string; before: string; after: string };
 
 function iniDifferences(file: IniFile, before: string, after: string) {
@@ -97,7 +98,7 @@ export default function ClusterPresetActions({
   modOverride,
 }: {
   clusterId: string;
-  getDraft: (mode: Mode) => Draft;
+  getDraft: (mode: Mode) => ClusterPresetDraft;
   onLoad: (preset: ClusterPreset) => void;
   onError: (message: string) => void;
   disabled?: boolean;
@@ -151,17 +152,19 @@ export default function ClusterPresetActions({
   );
 }
 
-function PresetDialog({
+export function PresetDialog({
   clusterId,
   mode,
   draft,
   modOverride,
+  editing,
   onLoad,
   onClose,
 }: OpenPreset & {
   clusterId: string;
   modOverride?: boolean;
-  onLoad: (preset: ClusterPreset) => void;
+  editing?: { preset?: ClusterPreset; onSaved: () => void };
+  onLoad?: (preset: ClusterPreset) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -172,15 +175,18 @@ function PresetDialog({
   const [method, setMethod] = useState<'new' | 'overwrite'>('new');
   const [selection, setSelection] = useState('');
   const [name, setName] = useState<string>();
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState(!!editing?.preset);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const saving = mode === 'save';
-  const overwrite = saving && method === 'overwrite';
-  const selected = presets.find((preset) => preset.id === selection) ?? presets[0];
+  const overwrite = saving && (editing ? !!editing.preset : method === 'overwrite');
+  const selected = editing
+    ? editing.preset
+    : (presets.find((preset) => preset.id === selection) ?? presets[0]);
   let number = 1;
   while (presets.some((preset) => preset.name === `配置 ${number}`)) number++;
-  const enteredName = name ?? `配置 ${number}`;
+  const enteredName = name ?? editing?.preset?.name ?? `配置 ${number}`;
+  const presetName = overwrite && !editing ? (selected?.name ?? '') : enteredName;
   const current: ClusterPresetContent =
     draft.kind === 'game' ? { kind: 'game', config: clusterGameConfig(draft.config) } : draft;
   const changes =
@@ -189,10 +195,7 @@ function PresetDialog({
       : null;
   const available = !catalog.loading && !catalog.error && !!group && (!saving || group.canSave);
   const blocked =
-    busy ||
-    !available ||
-    ((!saving || overwrite) && !selected) ||
-    (saving && !overwrite && !enteredName.trim());
+    busy || !available || ((!saving || overwrite) && !selected) || (saving && !presetName.trim());
   const submit = async (updateMaps: boolean) => {
     if (blocked) return;
     setBusy(true);
@@ -205,7 +208,7 @@ function PresetDialog({
             'POST',
             {
               ...draft,
-              name: overwrite ? selected!.name : enteredName,
+              name: presetName,
               ...(overwrite && { overwrite: { id: selected!.id, revision: selected!.revision } }),
               updateMaps,
             },
@@ -217,6 +220,7 @@ function PresetDialog({
               ? '已覆盖组配置'
               : '已新建组配置',
       );
+      editing?.onSaved();
       onClose();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '保存组配置失败。');
@@ -239,34 +243,33 @@ function PresetDialog({
           {!catalog.loading && !catalog.error && !available && (
             <Alert severity="warning">{t('当前账号无法执行此互通组操作。')}</Alert>
           )}
-          {available && !confirm && saving && (
-            <>
-              <FormField
-                field={{
-                  key: 'method',
-                  label: '保存方式',
-                  kind: 'select',
-                  options: [
-                    { value: 'new', label: '新建一份' },
-                    ...(presets.length ? [{ value: 'overwrite', label: '覆盖已有配置' }] : []),
-                  ],
-                }}
-                value={method}
-                disabled={busy}
-                onChange={(value) => setMethod(value === 'overwrite' ? 'overwrite' : 'new')}
-              />
-              {!overwrite && (
-                <FormField
-                  field={{ key: 'name', label: '配置名称', required: true, maxLength: 80 }}
-                  value={enteredName}
-                  disabled={busy}
-                  onChange={(value) => setName(String(value))}
-                />
-              )}
-            </>
+          {available && !confirm && saving && !editing && (
+            <FormField
+              field={{
+                key: 'method',
+                label: '保存方式',
+                kind: 'select',
+                options: [
+                  { value: 'new', label: '新建一份' },
+                  ...(presets.length ? [{ value: 'overwrite', label: '覆盖已有配置' }] : []),
+                ],
+              }}
+              value={method}
+              disabled={busy}
+              onChange={(value) => setMethod(value === 'overwrite' ? 'overwrite' : 'new')}
+            />
+          )}
+          {available && saving && (editing || !overwrite) && (
+            <FormField
+              field={{ key: 'name', label: '配置名称', required: true, maxLength: 80 }}
+              value={enteredName}
+              disabled={busy}
+              onChange={(value) => setName(String(value))}
+            />
           )}
           {available &&
             !confirm &&
+            !editing &&
             (!saving || overwrite) &&
             (presets.length ? (
               <FormField
@@ -325,8 +328,12 @@ function PresetDialog({
         </Stack>
       </DialogContent>
       <DialogActions sx={{ flexWrap: 'wrap', gap: 1 }}>
-        <Button type="button" onClick={confirm ? () => setConfirm(false) : onClose} disabled={busy}>
-          {t(confirm ? '返回' : '取消')}
+        <Button
+          type="button"
+          onClick={confirm && !editing ? () => setConfirm(false) : onClose}
+          disabled={busy}
+        >
+          {t(confirm && !editing ? '返回' : '取消')}
         </Button>
         {confirm ? (
           <>
@@ -349,7 +356,7 @@ function PresetDialog({
             disabled={blocked}
             onClick={() => {
               if (!saving && selected) {
-                onLoad(selected);
+                onLoad?.(selected);
                 onClose();
               } else if (overwrite) setConfirm(true);
               else if (saving) void submit(false);
