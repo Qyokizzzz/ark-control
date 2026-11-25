@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import {
+  copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -21,6 +23,8 @@ const run = promisify(execFile);
 const releasePattern = /^[a-f0-9]{40}-\d+-\d+$/;
 const app = 'ark-control-api';
 const agentPackageName = 'ArkHostAgent-Windows-x64.zip';
+const includeApi = process.env.ARK_DEPLOY_API !== 'false';
+const includeAgent = process.env.ARK_DEPLOY_AGENT !== 'false';
 const [directory, id, digest] = process.argv.slice(-3);
 const [major, minor] = process.versions.node.split('.').map(Number);
 
@@ -106,6 +110,9 @@ async function deploy(signal) {
     (!releasePattern.test(previous) || !(await optional(stat(entry(previous))))?.isFile())
   )
     throw new Error('current-release 记录无效，请核对已发布的版本目录。');
+  if (!includeApi && !includeAgent) throw new Error('本次没有后端组件需要发布。');
+  if ((!includeApi || !includeAgent) && !previous)
+    throw new Error('没有可复用的线上版本，请手动运行 Actions 进行全量部署。');
   await pm2(['ping']);
   const listing = await pm2(['jlist']);
   let registered;
@@ -173,6 +180,18 @@ async function deploy(signal) {
     unpacked = true;
     await run('tar', ['-xzf', archive, '-C', release, '--no-same-owner'], { signal });
     const api = join(release, 'apps', 'api');
+    if (!includeApi) {
+      await cp(join(releases, previous, 'apps', 'api'), api, {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+    }
+    if (!includeAgent) {
+      if (!(await optional(stat(agentPackage(previous))))?.isFile())
+        throw new Error('上一个版本缺少可复用的主机助手 ZIP，请手动运行 Actions 进行全量部署。');
+      await mkdir(join(release, 'artifacts'), { recursive: true });
+      await copyFile(agentPackage(previous), agentPackage(id));
+    }
     const [manifest, dependencies, main, windowsAgent] = await Promise.all(
       [
         join(api, 'package.json'),

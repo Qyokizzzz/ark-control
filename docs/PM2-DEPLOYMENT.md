@@ -1,6 +1,8 @@
 # GitHub Actions 与 PM2 部署
 
-将项目内容提交到仓库根目录。在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。工作流 **Deploy Ark Control** 在默认分支上运行。GitHub 托管 Windows Runner 构建 Windows x64 主机助手，Linux Runner 校验 ZIP 并将它随 API 打包。自托管 Runner 下载发布包和部署脚本，在阿里云 ECS 本机发布 API。API 健康检查通过后发布 Pages。
+将项目内容提交到仓库根目录。在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。工作流 **Deploy Ark Control** 在默认分支上运行。前端和后端分别与自身上次成功的 GitHub 部署比较，按变更安排 Pages 构建、API 打包和 Windows 主机助手打包。
+
+只改前端时直接发布 Pages。API 或主机助手单独改动时，自托管 Runner 在 ECS 上复用线上版本的另一项，PM2 切换到包含两项产物的新版本。两边都需要发布时，API 健康检查通过后再发布 Pages。公共代码、工作区依赖和部署工作流改动会触发全量构建。首次部署、部署历史不可用时会完整构建对应环境，在 Actions 手动运行工作流可强制全量部署。
 
 ## 仓库配置
 
