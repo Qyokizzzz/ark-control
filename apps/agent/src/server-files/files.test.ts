@@ -405,6 +405,68 @@ describe('server file library', () => {
       /ShooterGame\.uproject.*更新服务端/,
     );
   });
+  it('repairs a missing ArkApi PDB for the selected branch and shares it between stopped maps', async () => {
+    const value = await fixture();
+    const source = await folder();
+    const executable = install.serverExecutableAt(source);
+    const pdb = 'ShooterGame/Binaries/Win64/ShooterGameServer.pdb';
+    await mkdir(dirname(executable), { recursive: true });
+    await writeFile(executable, 'server-binary');
+    await writeFile(join(source, '.ark-control-install.json'), '{"branch":"preaquatica"}');
+    const file = asset(value.config.hostId);
+    await value.library.execute(
+      task('import', file, { sourcePath: source }),
+      signal(),
+      () => undefined,
+    );
+    const selected = {
+      branch: 'preaquatica' as const,
+      serverFileSource: file.id,
+    };
+    const first = { ...map(value.config.hostId), ...selected };
+    const second = { ...map(value.config.hostId), ...selected };
+    const shared = join(value.root, 'maps', file.id, pdb);
+    const firstPdb = join(value.root, 'instances', first.id, pdb);
+    const secondPdb = join(value.root, 'instances', second.id, pdb);
+    await value.library.prepare(first, {}, () => undefined, signal());
+    await value.library.prepare(second, {}, () => undefined, signal());
+    await mkdir(dirname(firstPdb), { recursive: true });
+    await writeFile(firstPdb, 'manually copied PDB');
+    await writeFile(
+      join(value.root, 'processes.json'),
+      JSON.stringify({ [second.id]: { pid: 12345 } }),
+    );
+    const running = vi.spyOn(processes, 'processMatches').mockResolvedValue(true);
+    const steam = vi.spyOn(install, 'installServer').mockImplementation(async () => {
+      await mkdir(dirname(shared), { recursive: true });
+      await writeFile(shared, 'official branch PDB');
+    });
+    const preparePlugins = (instance: AgentInstance) =>
+      value.library.prepare(instance, { requireArkApiPdb: true }, () => undefined, signal());
+
+    await expect(preparePlugins(first)).rejects.toThrow('请先关闭共用此文件的地图');
+    expect(steam).not.toHaveBeenCalled();
+    running.mockResolvedValue(false);
+    await expect(preparePlugins(first)).resolves.toEqual({ reused: false, fileId: file.id });
+    await expect(preparePlugins(second)).resolves.toEqual({ reused: true, fileId: file.id });
+    expect(steam).toHaveBeenCalledOnce();
+    expect(steam.mock.calls[0]?.[1].branch).toBe('preaquatica');
+    expect(await readFile(firstPdb, 'utf8')).toBe('official branch PDB');
+    expect(await readFile(secondPdb, 'utf8')).toBe('official branch PDB');
+    expect((await stat(shared)).nlink).toBe(3);
+    const [backup] = await readdir(join(value.root, 'recycle'));
+    expect(await readFile(join(value.root, 'recycle', backup!, pdb), 'utf8')).toBe(
+      'manually copied PDB',
+    );
+    steam.mockImplementationOnce(async () => {
+      expect((await stat(shared)).nlink).toBe(1);
+      await writeFile(shared, 'updated branch PDB');
+    });
+    await value.library.prepare(first, { update: true }, () => undefined, signal());
+    await expect(preparePlugins(second)).resolves.toEqual({ reused: true, fileId: file.id });
+    expect(await readFile(firstPdb, 'utf8')).toBe('updated branch PDB');
+    expect(await readFile(secondPdb, 'utf8')).toBe('updated branch PDB');
+  });
   it('rejects a Steam game client and retains an incomplete import for retry', async () => {
     const value = await fixture();
     const source = await folder();

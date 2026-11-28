@@ -58,7 +58,7 @@ export class GameRuntime {
     private readonly files?: FileLibrary,
     private readonly maskLaunchPassword?: (instanceId: string, password: string) => void,
   ) {
-    this.plugins = new PluginRuntime(config.root, client);
+    this.plugins = new PluginRuntime(config.root, client, files);
   }
   async initialize() {
     await mkdir(this.config.root, { recursive: true });
@@ -471,12 +471,7 @@ export class GameRuntime {
             ? (await this.files.installation(instance)).installed
             : await exists(serverExecutable(root, instance.id));
           if (!installed) throw new Error('此地图的游戏服务端文件不存在，请先安装地图。');
-          return await this.plugins.install(
-            command,
-            signal,
-            output,
-            () => !!this.files?.isBusy(instance.id),
-          );
+          return await this.plugins.install(command, signal, output);
         }
         case 'sync-config': {
           signal.throwIfAborted();

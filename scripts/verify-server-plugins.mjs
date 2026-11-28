@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -125,6 +125,7 @@ export async function verifyServerPlugins({
     for (const id of [instance.id, selected.id, excluded.id]) {
       await mkdir(instanceBin(id), { recursive: true });
       await writeFile(join(instanceBin(id), 'ShooterGameServer.exe'), 'unused fixture file');
+      await writeFile(join(instanceBin(id), 'ShooterGameServer.pdb'), 'server-symbols');
     }
     const shared = join(hostRoot, 'maps', randomUUID(), 'ShooterGame', 'Binaries', 'Win64');
     await mkdir(shared, { recursive: true });
@@ -165,6 +166,7 @@ export async function verifyServerPlugins({
 
     const arkApi = await archive({
       'ShooterGame/Binaries/Win64/version.dll': fakeDll,
+      'ShooterGame/Binaries/Win64/msdia140.dll': fakeDll,
       'ShooterGame/Binaries/Win64/config.json': '{"settings":{}}',
       'ShooterGame/Binaries/Win64/ArkApi/Plugins/Unexpected/Unexpected.dll': fakeDll,
     });
@@ -239,6 +241,7 @@ export async function verifyServerPlugins({
     await install().click();
     const result = await run(await lease(selected.id), 'succeeded');
     assert.deepEqual(result.report.installed, ['arkapi', 'permissions', 'arkshop']);
+    assert.deepEqual(await readFile(join(instanceBin(selected.id), 'msdia140.dll')), fakeDll);
     assert.equal(result.report.loaded, null);
     assert.equal(await readFile(join(configured, 'config.json'), 'utf8'), originalConfig);
     assert.equal(
@@ -276,6 +279,7 @@ export async function verifyServerPlugins({
       'release/ArkShopUI/ArkShopUI.dll': fakeDll,
       'release/ArkShopUI/PluginInfo.json': '{}',
     });
+    await unlink(join(instanceBin(selected.id), 'msdia140.dll'));
     await upload('ArkShopUI', 'arkshop-ui-358.zip', uiZip);
     const uiInstall = {
       scopeId: `cluster:${group}`,
@@ -298,6 +302,8 @@ export async function verifyServerPlugins({
       'arkshop',
       'arkshop-ui',
     ]);
+    assert.deepEqual(await readFile(join(instanceBin(selected.id), 'msdia140.dll')), fakeDll);
+    assert.deepEqual(await readFile(join(instanceBin(selected.id), 'version.dll')), fakeDll);
     passed('ArkShopUI 下载链接和创意工坊编号正确，安装自动包含依赖，旧版助手收到升级提示');
 
     await page.goto(`${apiUrl}/instances/${selected.id}`);

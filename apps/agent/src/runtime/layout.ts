@@ -48,8 +48,10 @@ const engineBinaries = /^engine\/binaries(?:\/(?:win64|linux))?$/;
 const runtimeBinary = /^(?:shootergameserver(?:\.exe)?|.*\.(?:dll|so(?:\.\d+)*|exe))$/i;
 const pluginLoader = /^(?:version|arkapi|winmm|dinput8|d3d9)\.dll$/i;
 const projectDescriptor = 'ShooterGame/ShooterGame.uproject';
+const serverPdb = 'ShooterGame/Binaries/Win64/ShooterGameServer.pdb';
 const packagedAssets = [
   { name: projectDescriptor, kind: 'file' },
+  { name: serverPdb, kind: 'file' },
   { name: 'ShooterGame/AssetRegistry.bin', kind: 'file' },
   { name: 'ShooterGame/SeekFreeContent', kind: 'directory' },
   { name: 'PackageInfo.bin', kind: 'file' },
@@ -193,12 +195,15 @@ export async function restorePackagedAssets(
     const isExpectedType = (data: typeof local) =>
       kind === 'file' ? data.isFile() : data.isDirectory();
     if (!isExpectedType(local)) continue;
+    if (name === serverPdb && local.size === 0) continue;
 
     await ensureSafeParent(root, to);
     const packaged = await info(to);
     if (packaged) {
       if (packaged.isSymbolicLink() || !isExpectedType(packaged))
         throw new Error(`共享资源路径异常：${name}。原有文件已保留。`);
+      // A local PDB copy is handled when that instance next prepares its view.
+      if (name === serverPdb) continue;
       if (await matchesLink(to, from, kind)) continue;
     }
     if (kind === 'file' && local.nlink !== 1) continue;
@@ -210,6 +215,11 @@ export async function restorePackagedAssets(
     moved = true;
   }
   return moved;
+}
+
+export async function hasServerPdb(directory: string) {
+  const file = await info(inside(directory, serverPdb));
+  return !!file?.isFile() && file.size > 0;
 }
 
 export async function assertProjectDescriptor(root: string, instanceId: string) {
@@ -291,6 +301,7 @@ export async function prepareView(
   if (previous && previous.assetId !== assetId)
     throw new Error('此实例仍关联另一套文件，请先解除原文件引用。');
   const links: View['links'] = [];
+  let privatePdb: string | undefined;
   for await (const item of layout(source)) {
     if (item.kind === 'private') {
       await seedRuntime(root, source, target, item);
@@ -299,9 +310,15 @@ export async function prepareView(
     const path = inside(target, item.name);
     await ensureSafeParent(root, path);
     const origin = inside(source, item.name);
+    const isPdb = item.name.toLowerCase() === serverPdb.toLowerCase();
+    if (isPdb && !(await hasServerPdb(source))) continue;
     const identity = item.kind === 'file' ? await fileIdentity(origin) : undefined;
-    if ((await info(path)) && !(await matchesLink(origin, path, item.kind, identity)))
-      throw new Error(`实例中已有同名文件，未覆盖：${item.name}`);
+    const local = await info(path);
+    if (local && !(await matchesLink(origin, path, item.kind, identity))) {
+      if (!isPdb || !local.isFile() || local.nlink !== 1)
+        throw new Error(`实例中已有同名文件，未覆盖：${item.name}`);
+      privatePdb = path;
+    }
     links.push({ name: item.name, kind: item.kind, identity });
   }
   const existing = new Set(links.map((item) => item.name));
@@ -325,6 +342,11 @@ export async function prepareView(
         break;
       }
     }
+  }
+  if (privatePdb) {
+    const backup = inside(root, 'recycle', `${instanceId}-pdb-${randomUUID()}`, serverPdb);
+    await ensureSafeParent(root, backup);
+    await rename(privatePdb, backup);
   }
   await atomicJson(inside(target, '.ark-control-view.json'), { assetId, links } satisfies View);
   for (const item of links) {

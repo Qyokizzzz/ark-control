@@ -19,9 +19,11 @@ import type {
 } from '@ark-control/common';
 import type { AgentClient } from '@/client';
 import { checksum, ensureSafeParent, extractZip, filesBelow, inside } from '@/files';
-import { info, managedId, managedPath, ownedDirectory } from '@/runtime/layout';
+import { hasServerPdb, info, managedId, managedPath, ownedDirectory } from '@/runtime/layout';
 import { serverExecutableAt } from '@/runtime/install';
+import type { FileLibrary } from '@/server-files';
 
+const diaDll = 'msdia140.dll';
 const execute = promisify(execFile);
 const powershell = (command: string) =>
   execute(
@@ -50,33 +52,37 @@ function directory(win64: string, id: ServerPluginId) {
 const dllPath = (win64: string, id: ServerPluginId) =>
   inside(directory(win64, id), serverPlugins[id].dll);
 
-async function regularPrivateFile(path: string) {
+async function regularFile(path: string, shareable = false) {
   const file = await info(path);
   return (
     !!file?.isFile() &&
     !file.isSymbolicLink() &&
-    file.nlink === 1 &&
+    (shareable || file.nlink === 1) &&
     !relative(path, await realpath(path))
   );
+}
+
+async function installedDia(win64: string) {
+  const path = inside(win64, diaDll);
+  return (await regularFile(path, true)) && (await isWindowsDll(path));
 }
 
 async function installedPlugins(win64: string) {
   const installed = await Promise.all(
     pluginIdSchema.options.map(async (id) => {
       const path = dllPath(win64, id);
-      if (!(await regularPrivateFile(path)) || !(await isWindowsDll(path))) return null;
+      if (!(await regularFile(path)) || !(await isWindowsDll(path))) return null;
       if (id === 'arkapi') {
         const apiFolder = inside(win64, 'ArkApi');
         const folder = await info(apiFolder);
         return folder?.isDirectory() &&
           !folder.isSymbolicLink() &&
-          !relative(apiFolder, await realpath(apiFolder))
+          !relative(apiFolder, await realpath(apiFolder)) &&
+          (await installedDia(win64))
           ? id
           : null;
       }
-      return (await regularPrivateFile(inside(directory(win64, id), 'PluginInfo.json')))
-        ? id
-        : null;
+      return (await regularFile(inside(directory(win64, id), 'PluginInfo.json'))) ? id : null;
     }),
   );
   return installed.filter((id): id is ServerPluginId => id !== null);
@@ -138,6 +144,19 @@ async function packageFiles(win64: string, extracted: string, id: ServerPluginId
       },
     ];
   });
+  if (id === 'arkapi' && !(await installedDia(win64))) {
+    const source = files.find(
+      (path) => dirname(path) === base && basename(path).toLowerCase() === diaDll,
+    );
+    if (!source || !(await isWindowsDll(source)))
+      throw new Error(
+        `ASE ArkApi 安装包缺少有效的 ${diaDll}，请导入包含该文件的 Windows x64 ZIP。`,
+      );
+    const target = inside(win64, diaDll);
+    if (await info(target))
+      throw new Error(`当前地图的 ${diaDll} 无效，请备份并移出 Win64 目录后重试。`);
+    selected.push({ source, target, marker: false });
+  }
   return selected;
 }
 
@@ -161,7 +180,7 @@ async function copyNewFiles(
       pending.push(file);
       continue;
     }
-    if (!(await regularPrivateFile(file.target)))
+    if (!(await regularFile(file.target, key === diaDll)))
       throw new Error(`无法确认插件文件属于当前地图：${relativeName}`);
     if (file.marker && (await checksum(file.target)) !== (await checksum(file.source)))
       throw new Error(`地图已有不同版本的 ${basename(file.target)}，请先备份并处理现有插件。`);
@@ -201,6 +220,7 @@ export class PluginRuntime {
   constructor(
     private readonly root: string,
     private readonly client: Pick<AgentClient, 'downloadPlugin'>,
+    private readonly files?: Pick<FileLibrary, 'prepare' | 'isBusy'>,
   ) {}
 
   private win64(id: string) {
@@ -256,12 +276,7 @@ export class PluginRuntime {
     })();
   }
 
-  async install(
-    command: AgentCommand,
-    signal: AbortSignal,
-    output: (message: string) => void,
-    busy: () => boolean,
-  ) {
+  async install(command: AgentCommand, signal: AbortSignal, output: (message: string) => void) {
     if (process.platform !== 'win32') throw new Error('服务端插件需要 Windows ASE。');
     const { instance } = command;
     const plan = pluginPlanSchema.parse(command.payload);
@@ -273,11 +288,12 @@ export class PluginRuntime {
       throw new Error('地图分支或插件依赖已变化，请重新提交安装。');
     if (!managedId.test(command.id)) throw new Error('安装任务标识无效。');
     const win64 = this.win64(instance.id);
-    const executable = serverExecutableAt(managedPath(this.root, 'instances', instance.id));
+    const instanceDirectory = managedPath(this.root, 'instances', instance.id);
+    const executable = serverExecutableAt(instanceDirectory);
     await ownedDirectory(this.root, win64, true);
     const confirmStopped = async () => {
       signal.throwIfAborted();
-      if (busy()) throw new Error('此地图的服务端文件正在操作。');
+      if (this.files?.isBusy(instance.id)) throw new Error('此地图的服务端文件正在操作。');
       const processes = await powershell(
         '$ErrorActionPreference = "Stop"; Get-Process | Where-Object { $_.ProcessName -eq "ShooterGameServer" } | ForEach-Object { if ($_.Path) { $_.Path } elseif (-not $_.HasExited) { "unknown" } }',
       ).catch(() => {
@@ -312,9 +328,22 @@ export class PluginRuntime {
         await extractZip(zip, extracted, 256 * 1024 ** 2, { signal, maxEntries: 2500 });
         files.push(...(await packageFiles(win64, extracted, pluginId)));
       }
+      await confirmStopped();
+      if (this.files) {
+        await this.files.prepare(
+          instance,
+          {
+            requireArkApiPdb: true,
+            logFile: inside(this.root, 'logs', 'steamcmd', `${command.id}.log`),
+          },
+          output,
+          signal,
+        );
+      }
+      if (!(await hasServerPdb(instanceDirectory)))
+        throw new Error('地图运行目录缺少 ShooterGameServer.pdb，请校验同分支服务端文件后重试。');
       output('正在安装并核对插件文件');
       if (!(await ownedDirectory(this.root, win64, true))) await mkdir(win64);
-      // ArkApi also supports an archive containing only the version.dll loader.
       await ensureSafeParent(win64, inside(win64, 'ArkApi', 'Plugins', 'placeholder'));
       const backup = inside(win64, 'ArkControlPluginBackups', command.id);
       const written = await copyNewFiles(win64, backup, files, signal, confirmStopped);

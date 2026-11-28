@@ -23,6 +23,7 @@ import { installationBranch } from '@/runtime/branches';
 import {
   assertProjectDescriptor,
   detachView,
+  hasServerPdb,
   info,
   managedId as uuid,
   managedPath,
@@ -107,6 +108,7 @@ export async function copyServerTree(
 type Binding = { assetId: string; migrating?: true };
 type PrepareOptions = {
   update?: boolean;
+  requireArkApiPdb?: boolean;
   logFile?: string;
   beforeUpdate?: (instances: AgentInstance[]) => Promise<void>;
 };
@@ -540,11 +542,16 @@ export class FileLibrary {
         if (prior?.branch && prior.branch !== 'unknown' && prior.branch !== branch)
           throw new Error('服务端分支与地图设置不一致，请检查文件来源。');
         if (!this.bindings.has(instance.id)) await this.bind(instance.id, { assetId });
-        const reused =
+        const canReuse =
           !options.update &&
-          !!this.compatible(prior, instance) &&
+          (!!this.compatible(prior, instance) ||
+            (options.requireArkApiPdb === true &&
+              assetId === instance.id &&
+              prior?.branch === 'unknown' &&
+              prior.status === 'ready' &&
+              branch === 'public')) &&
           !!(await info(serverExecutableAt(directory)))?.isFile();
-        if (!reused) {
+        const confirmPackageUpdate = async () => {
           await this.assertIdle(assetId, instance.id, options.update === true);
           const peers = this.users(assetId).filter((id) => id !== instance.id);
           if (options.beforeUpdate)
@@ -553,9 +560,16 @@ export class FileLibrary {
               ...this.instances.filter((item) => peers.includes(item.id)),
             ]);
           await this.assertIdle(assetId, instance.id);
-        }
+        };
+        if (!canReuse) await confirmPackageUpdate();
         const repaired = await this.repairLegacyLayout(assetId, instance.id, report);
-        if (reused && repaired?.lastError) throw new Error(repaired.lastError);
+        if (canReuse && repaired?.lastError) throw new Error(repaired.lastError);
+        const missingPdb = options.requireArkApiPdb && !(await hasServerPdb(directory));
+        if (canReuse && missingPdb) {
+          report('当前服务端缺少 ShooterGameServer.pdb，正在准备通过 SteamCMD 校验同分支服务端。');
+          await confirmPackageUpdate();
+        }
+        const reused = canReuse && !missingPdb;
         if (!reused) {
           await this.patchPackage(
             assetId,
@@ -566,6 +580,10 @@ export class FileLibrary {
             `ASE 服务端 · ${branch}`,
           );
         } else report(`正在关联「${prior!.name}」，直接使用同一份服务端文件。`);
+        if (options.requireArkApiPdb && !(await hasServerPdb(directory)))
+          throw new Error(
+            'SteamCMD 校验后仍缺少 ShooterGameServer.pdb，无法完成 ArkApi 安装。请检查同分支服务端文件。',
+          );
         await prepareView(
           this.config.root,
           instance.id,
